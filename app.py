@@ -196,16 +196,20 @@ def configured_secret(name: str, default: str = "") -> str:
     except Exception:
         value = ""
     return str(value or os.getenv(name, default) or "").strip()
+# ============================================================
+# INTERVIEW TABS
+# ============================================================
 
-
-with st.sidebar:
-    st.markdown("## 🎯 Intervia")
-    st.caption("Evidence-Grounded Interview Intelligence")
-    api_key = st.text_input("Groq API key", type="password", value=configured_secret("GROQ_API_KEY"))
-    target_role = st.text_input("Target role", value="Senior Renewable Energy Engineer", disabled=st.session_state.started)
-    company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
-
-    st.markdown("### Interview Setup")
+setup_tab, 
+interview_tab, 
+analytics_tab, 
+report_tab = st.tabs(
+    [
+        "⚙️ Interview categories and Interview mode",
+        "🎤 Live Adaptive Interview",
+        "📊 Session Analytics",
+        "📄 Final Interview Report",
+    ]
 )
 
 with setup_tab:
