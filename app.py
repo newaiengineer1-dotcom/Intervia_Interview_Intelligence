@@ -1,4 +1,1091 @@
 ```python
+import json
+import os
+import re
+import time
+import uuid
+from collections import defaultdict
+from datetime import datetime
+from html import escape
+
+import streamlit as st
+import streamlit.components.v1 as components
+
+from agents import (
+    CoachAgent,
+    EvidenceAgent,
+    GroqGateway,
+    InterviewerAgent,
+    ResearchAgent,
+    StrategyAgent,
+)
+from db import init_db, save_session
+from report import build_markdown_report, build_pdf_report
+from utils import extract_uploaded_text, safe_clamp
+
+
+# ============================================================
+# PAGE CONFIGURATION
+# ============================================================
+
+st.set_page_config(
+    page_title="Intervia — Interview Intelligence",
+    page_icon="🎯",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# ============================================================
+# INTERVIEW OPTIONS
+# ============================================================
+
+CATEGORIES = [
+    "Behavioral & Situational 🎭",
+    "Technical & Role-Specific 💻",
+    "HR & Screening Basics 🤝",
+    "Leadership & Management 👔",
+    "Case & Analytical Interviews 📊",
+    "Competency & Skill-Based 🧠",
+    "Reverse Interviewing — Questions for the Employer 🔍",
+]
+
+INTERVIEW_MODES = [
+    "Mixed",
+    "Technical",
+    "Behavioral",
+    "Case / Situational",
+    "HR / Screening",
+    "Leadership",
+]
+
+DURATIONS = {
+    "30 Minutes": 30,
+    "60 Minutes": 60,
+    "120 Minutes": 120,
+    "180 Minutes": 180,
+}
+
+TARGET_QUESTIONS = {
+    30: 8,
+    60: 15,
+    120: 28,
+    180: 40,
+}
+
+
+# ============================================================
+# IMPROVED DARK AI DASHBOARD CSS
+# ============================================================
+
+st.markdown(
+    """
+    <style>
+
+    /* =====================================================
+       GLOBAL
+       ===================================================== */
+
+    :root {
+        --bg: #050b16;
+        --bg2: #091326;
+        --panel: #0e1a30;
+        --panel2: #12213c;
+        --line: #2b4168;
+        --text: #f4f7ff;
+        --text2: #d8e2f4;
+        --muted: #b5c2d8;
+        --accent: #8b6cff;
+        --accent2: #a78bfa;
+        --good: #6ee7b7;
+        --warning: #fbbf24;
+        --danger: #fb7185;
+    }
+
+    .stApp {
+        background:
+            radial-gradient(
+                circle at 80% 0%,
+                rgba(87, 64, 180, 0.35) 0%,
+                transparent 34%
+            ),
+            linear-gradient(
+                135deg,
+                var(--bg) 0%,
+                #071224 55%,
+                #08152a 100%
+            );
+
+        color: var(--text);
+    }
+
+    /* Main content */
+
+    .main .block-container {
+        padding-top: 2rem;
+        padding-bottom: 3rem;
+        max-width: 1500px;
+    }
+
+    /* =====================================================
+       SIDEBAR
+       ===================================================== */
+
+    [data-testid="stSidebar"] {
+        background:
+            linear-gradient(
+                180deg,
+                #071020 0%,
+                #09152a 100%
+            );
+
+        border-right: 1px solid #263b60;
+    }
+
+    [data-testid="stSidebar"] * {
+        color: var(--text2);
+    }
+
+    /* =====================================================
+       GENERAL TEXT
+       ===================================================== */
+
+    html,
+    body,
+    [class*="css"] {
+        color: var(--text);
+    }
+
+    p,
+    span,
+    label,
+    li {
+        color: var(--text2);
+    }
+
+    .stMarkdown,
+    .stCaption,
+    .stText,
+    .stTextInput,
+    .stTextArea {
+        color: var(--text);
+    }
+
+    /* Improve captions */
+
+    [data-testid="stCaptionContainer"] p {
+        color: #b8c6dc !important;
+        font-size: 0.9rem;
+    }
+
+    /* =====================================================
+       HERO
+       ===================================================== */
+
+    .hero {
+        padding: 30px 34px;
+        border: 1px solid #334b78;
+        border-radius: 24px;
+
+        background:
+            linear-gradient(
+                135deg,
+                rgba(124, 92, 255, 0.30),
+                rgba(10, 23, 45, 0.95)
+            );
+
+        box-shadow:
+            0 20px 60px rgba(0, 0, 0, 0.38);
+
+        margin-bottom: 24px;
+    }
+
+    .eyebrow {
+        color: #c4b5fd !important;
+        font-size: 13px;
+        font-weight: 900;
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+    }
+
+    .hero h1 {
+        color: #ffffff !important;
+        margin: 8px 0;
+        font-size: 40px;
+        line-height: 1.15;
+    }
+
+    .hero .muted {
+        color: #c8d4e8 !important;
+        font-size: 16px;
+        line-height: 1.6;
+    }
+
+    /* =====================================================
+       CARDS
+       ===================================================== */
+
+    .card {
+        padding: 20px;
+        border: 1px solid #2d4369;
+        border-radius: 18px;
+        background: rgba(14, 26, 48, 0.92);
+        margin-bottom: 14px;
+        color: var(--text);
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.20);
+    }
+
+    /* =====================================================
+       AGENT STATUS
+       ===================================================== */
+
+    .agent {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+
+        padding: 13px 4px;
+
+        border-bottom: 1px solid #263957;
+
+        color: #e7eefb;
+    }
+
+    .agent:last-child {
+        border-bottom: 0;
+    }
+
+    .status {
+        color: var(--good) !important;
+        font-size: 12px;
+        font-weight: 800;
+    }
+
+    /* =====================================================
+       QUESTIONS
+       ===================================================== */
+
+    .question {
+        font-size: 25px;
+        line-height: 1.45;
+        font-weight: 750;
+
+        padding: 24px;
+
+        border-left: 5px solid var(--accent);
+
+        background:
+            linear-gradient(
+                135deg,
+                #0c1930,
+                #101f3a
+            );
+
+        border-radius: 16px;
+
+        color: #ffffff !important;
+
+        box-shadow:
+            0 10px 30px rgba(0, 0, 0, 0.25);
+    }
+
+    .category {
+        display: inline-block;
+
+        padding: 7px 12px;
+
+        border: 1px solid #536b99;
+
+        border-radius: 999px;
+
+        color: #e7ddff !important;
+
+        font-size: 12px;
+        font-weight: 700;
+
+        background: #17264a;
+
+        margin-bottom: 10px;
+    }
+
+    /* =====================================================
+       SMALL TEXT
+       ===================================================== */
+
+    .small {
+        font-size: 12px;
+        color: #b9c7dd !important;
+    }
+
+    .muted {
+        color: #b9c7dd !important;
+    }
+
+    /* =====================================================
+       FORM CONTROLS
+       ===================================================== */
+
+    /* Labels */
+
+    .stSelectbox label,
+    .stMultiSelect label,
+    .stTextInput label,
+    .stTextArea label,
+    .stRadio label,
+    .stCheckbox label,
+    .stFileUploader label {
+        color: #edf3ff !important;
+        font-weight: 700 !important;
+    }
+
+    /* Inputs */
+
+    div[data-baseweb="select"] > div {
+        background-color: #111f38 !important;
+        border: 1px solid #3c5278 !important;
+        color: #ffffff !important;
+    }
+
+    div[data-baseweb="select"] * {
+        color: #ffffff !important;
+    }
+
+    div[data-baseweb="input"] {
+        background-color: #101e35 !important;
+        border: 1px solid #3c5278 !important;
+    }
+
+    div[data-baseweb="input"] input {
+        color: #ffffff !important;
+        background-color: #101e35 !important;
+    }
+
+    textarea {
+        color: #ffffff !important;
+        background-color: #101e35 !important;
+        border: 1px solid #3c5278 !important;
+    }
+
+    textarea::placeholder,
+    input::placeholder {
+        color: #91a3bf !important;
+    }
+
+    /* Multiselect tags */
+
+    span[data-baseweb="tag"] {
+        background-color: #4c3aa8 !important;
+        color: #ffffff !important;
+    }
+
+    span[data-baseweb="tag"] span {
+        color: #ffffff !important;
+    }
+
+    /* =====================================================
+       BUTTONS
+       ===================================================== */
+
+    .stButton > button {
+        background: linear-gradient(
+            135deg,
+            #7657f6,
+            #5b42d8
+        ) !important;
+
+        color: #ffffff !important;
+
+        border: 1px solid #927cff !important;
+
+        border-radius: 12px !important;
+
+        font-weight: 800 !important;
+
+        min-height: 44px;
+
+        box-shadow:
+            0 8px 20px rgba(80, 60, 180, 0.30);
+    }
+
+    .stButton > button:hover {
+        background: linear-gradient(
+            135deg,
+            #8a6cff,
+            #684fe6
+        ) !important;
+
+        color: #ffffff !important;
+
+        border-color: #b1a1ff !important;
+    }
+
+    /* =====================================================
+       TABS
+       ===================================================== */
+
+    button[data-baseweb="tab"] {
+        color: #b9c7dd !important;
+        font-weight: 700 !important;
+    }
+
+    button[data-baseweb="tab"][aria-selected="true"] {
+        color: #ffffff !important;
+    }
+
+    [data-baseweb="tab-highlight"] {
+        background-color: #8b6cff !important;
+    }
+
+    /* =====================================================
+       METRICS
+       ===================================================== */
+
+    [data-testid="stMetricLabel"] {
+        color: #b9c7dd !important;
+    }
+
+    [data-testid="stMetricValue"] {
+        color: #ffffff !important;
+    }
+
+    [data-testid="stMetricDelta"] {
+        color: #6ee7b7 !important;
+    }
+
+    /* =====================================================
+       EXPANDERS
+       ===================================================== */
+
+    [data-testid="stExpander"] {
+        background-color: #0d1a31 !important;
+        border: 1px solid #2e456c !important;
+        border-radius: 14px !important;
+    }
+
+    [data-testid="stExpander"] summary {
+        color: #ffffff !important;
+        font-weight: 700 !important;
+    }
+
+    /* =====================================================
+       INFO / SUCCESS / WARNING / ERROR
+       ===================================================== */
+
+    [data-testid="stAlert"] {
+        color: #f4f7ff !important;
+    }
+
+    [data-testid="stAlert"] p {
+        color: #f4f7ff !important;
+    }
+
+    /* =====================================================
+       DIVIDER
+       ===================================================== */
+
+    hr {
+        border-color: #2b4168 !important;
+    }
+
+    /* =====================================================
+       TIMER
+       ===================================================== */
+
+    .timer {
+        font-size: 20px;
+        font-weight: 800;
+        color: #ffffff !important;
+    }
+
+    /* =====================================================
+       MODE BOX
+       ===================================================== */
+
+    .mode-box {
+        padding: 14px;
+
+        border: 1px solid #30476d;
+
+        border-radius: 14px;
+
+        background: #0b172c;
+
+        color: #eaf1ff !important;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# HELPER FUNCTIONS
+# ============================================================
+
+def configured_secret(name: str, default: str = "") -> str:
+    """
+    Read a secret from Streamlit Secrets first,
+    then fall back to environment variables.
+    """
+    try:
+        value = st.secrets.get(name, "")
+    except Exception:
+        value = ""
+
+    return str(
+        value or os.getenv(name, default) or ""
+    ).strip()
+
+
+def render_speech_controls(
+    text: str,
+    key: str,
+    title: str,
+    language: str,
+    autoplay: bool = False,
+):
+    payload = json.dumps(
+        text or "",
+        ensure_ascii=False,
+    )
+
+    lang_payload = json.dumps(
+        language or "en-US"
+    )
+
+    safe_key = re.sub(
+        r"[^A-Za-z0-9_]",
+        "_",
+        key,
+    )
+
+    auto_delay = 350 if autoplay else 999999
+
+    components.html(
+        f"""
+        <div style="
+            font-family:Arial,sans-serif;
+            padding:8px 0;
+            color:#d8e2f4;
+        ">
+
+          <div style="
+              color:#b9c7dd;
+              font-size:12px;
+              font-weight:700;
+              margin-bottom:7px;
+          ">
+              🔊 {escape(title)}
+          </div>
+
+          <button
+              id="play_{safe_key}"
+              style="
+                  border:1px solid #526b96;
+                  background:#17264a;
+                  color:#ffffff;
+                  border-radius:10px;
+                  padding:9px 14px;
+                  cursor:pointer;
+                  margin-right:6px;
+              "
+          >
+              ▶ Play
+          </button>
+
+          <button
+              id="stop_{safe_key}"
+              style="
+                  border:1px solid #526b96;
+                  background:#0d1830;
+                  color:#d8e2f4;
+                  border-radius:10px;
+                  padding:9px 14px;
+                  cursor:pointer;
+              "
+          >
+              ■ Stop
+          </button>
+
+          <span
+              id="status_{safe_key}"
+              style="
+                  color:#aebed5;
+                  font-size:12px;
+                  margin-left:8px;
+              "
+          ></span>
+
+        </div>
+
+        <script>
+
+        const text_{safe_key} = {payload};
+        const lang_{safe_key} = {lang_payload};
+
+        const play_{safe_key} =
+            document.getElementById(
+                'play_{safe_key}'
+            );
+
+        const stop_{safe_key} =
+            document.getElementById(
+                'stop_{safe_key}'
+            );
+
+        const status_{safe_key} =
+            document.getElementById(
+                'status_{safe_key}'
+            );
+
+        let utterance_{safe_key} = null;
+
+        function stopSpeech_{safe_key}(
+            label='Stopped'
+        ) {{
+
+            if (
+                'speechSynthesis'
+                in window
+            ) {{
+                window.speechSynthesis.cancel();
+            }}
+
+            utterance_{safe_key} = null;
+
+            status_{safe_key}.textContent =
+                label;
+        }}
+
+        function speak_{safe_key}() {{
+
+            if (
+                !(
+                    'speechSynthesis'
+                    in window
+                )
+            ) {{
+
+                status_{safe_key}.textContent =
+                    'Browser speech is not supported.';
+
+                return;
+            }}
+
+            stopSpeech_{safe_key}('');
+
+            utterance_{safe_key} =
+                new SpeechSynthesisUtterance(
+                    text_{safe_key}
+                );
+
+            utterance_{safe_key}.lang =
+                lang_{safe_key};
+
+            utterance_{safe_key}.rate =
+                0.96;
+
+            utterance_{safe_key}.pitch =
+                1.0;
+
+            utterance_{safe_key}.onstart =
+                () => status_{safe_key}.textContent =
+                    'Speaking…';
+
+            utterance_{safe_key}.onend =
+                () => {{
+                    utterance_{safe_key} = null;
+
+                    status_{safe_key}.textContent =
+                        'Question finished';
+                }};
+
+            utterance_{safe_key}.onerror =
+                () => {{
+                    utterance_{safe_key} = null;
+
+                    status_{safe_key}.textContent =
+                        'Speech playback failed';
+                }};
+
+            window.speechSynthesis.speak(
+                utterance_{safe_key}
+            );
+        }}
+
+        play_{safe_key}.onclick =
+            speak_{safe_key};
+
+        stop_{safe_key}.onclick =
+            () => stopSpeech_{safe_key}();
+
+        window.addEventListener(
+            'beforeunload',
+            () => stopSpeech_{safe_key}('')
+        );
+
+        setTimeout(
+            () => {{
+                if ({str(autoplay).lower()}) {{
+                    speak_{safe_key}();
+                }}
+            }},
+            {auto_delay}
+        );
+
+        </script>
+        """,
+        height=78,
+        scrolling=False,
+    )
+
+
+def render_timer(
+    started_at: float,
+    duration_minutes: int,
+):
+    remaining = max(
+        0,
+        int(
+            duration_minutes * 60
+            - (time.time() - started_at)
+        ),
+    )
+
+    components.html(
+        f"""
+        <div style="
+            padding:8px 0;
+            text-align:right;
+            font-family:Arial,sans-serif;
+        ">
+
+          <span style="
+              color:#b9c7dd;
+              font-size:12px;
+              font-weight:700;
+          ">
+              SESSION TIME REMAINING
+          </span>
+
+          <div
+              id="timer"
+              style="
+                  font-size:24px;
+                  font-weight:800;
+                  color:#ffffff;
+              "
+          >
+              --:--
+          </div>
+
+        </div>
+
+        <script>
+
+        let remaining = {remaining};
+
+        const el =
+            document.getElementById(
+                'timer'
+            );
+
+        function tick() {{
+
+            const m =
+                Math.floor(
+                    Math.max(
+                        0,
+                        remaining
+                    ) / 60
+                );
+
+            const s =
+                Math.max(
+                    0,
+                    remaining
+                ) % 60;
+
+            el.textContent =
+                String(m).padStart(2, '0')
+                + ':'
+                + String(s).padStart(2, '0');
+
+            if (remaining <= 0) {{
+                el.textContent =
+                    '00:00 — TIME';
+            }}
+
+            remaining -= 1;
+        }}
+
+        tick();
+
+        setInterval(
+            tick,
+            1000
+        );
+
+        </script>
+        """,
+        height=70,
+        scrolling=False,
+    )
+
+
+def duration_state(
+    started_at: float,
+    duration_minutes: int,
+):
+    elapsed = max(
+        0.0,
+        time.time() - started_at,
+    )
+
+    remaining = max(
+        0.0,
+        duration_minutes * 60 - elapsed,
+    )
+
+    return (
+        elapsed,
+        remaining,
+        remaining <= 0,
+    )
+
+
+def question_target(
+    duration_minutes: int,
+    elapsed_seconds: float,
+    completed: int,
+) -> int:
+
+    base = TARGET_QUESTIONS[
+        duration_minutes
+    ]
+
+    if elapsed_seconds <= 0:
+        return base
+
+    avg_turn = (
+        elapsed_seconds
+        / max(1, completed)
+    )
+
+    projected = int(
+        (duration_minutes * 60)
+        / max(avg_turn, 120)
+    )
+
+    return max(
+        3,
+        min(
+            base * 2,
+            max(base, projected),
+        ),
+    )
+
+
+def speech_metrics(
+    text: str,
+    estimated_seconds: float | None = None,
+):
+
+    words = re.findall(
+        r"\b[\w']+\b",
+        text or "",
+    )
+
+    filler_list = [
+        "um",
+        "uh",
+        "erm",
+        "like",
+        "you know",
+        "basically",
+        "actually",
+        "sort of",
+        "kind of",
+    ]
+
+    lowered = (
+        text or ""
+    ).lower()
+
+    fillers = sum(
+        len(
+            re.findall(
+                r"\b"
+                + re.escape(f)
+                + r"\b",
+                lowered,
+            )
+        )
+        for f in filler_list
+    )
+
+    words_count = len(words)
+
+    seconds = (
+        estimated_seconds
+        or max(
+            10,
+            words_count / 2.3,
+        )
+        if words_count
+        else 0
+    )
+
+    wpm = (
+        round(
+            words_count
+            / (seconds / 60),
+            1,
+        )
+        if seconds
+        else 0
+    )
+
+    return {
+        "words": words_count,
+        "filler_words": fillers,
+        "estimated_seconds": round(
+            seconds,
+            1,
+        ),
+        "words_per_minute": wpm,
+    }
+
+
+# ============================================================
+# DATABASE
+# ============================================================
+
+init_db()
+
+
+# ============================================================
+# SESSION STATE
+# ============================================================
+
+defaults = {
+    "session_id": str(uuid.uuid4()),
+    "evidence": None,
+    "research": None,
+    "turns": [],
+    "question": None,
+    "started": False,
+    "started_at": None,
+    "session_duration": 30,
+    "question_mode": "Text Questions",
+    "answer_mode": "⌨️ Type Answers",
+    "categories": CATEGORIES[:],
+    "company": "",
+    "company_track": "",
+    "camera_enabled": False,
+    "api_key": "",
+    "target_role": "",
+}
+
+for key, default in defaults.items():
+
+    if key not in st.session_state:
+        st.session_state[key] = default
+
+
+# ============================================================
+# API KEY
+# ============================================================
+
+secret_api_key = configured_secret(
+    "GROQ_API_KEY"
+)
+
+if secret_api_key:
+    st.session_state.api_key = secret_api_key
+
+elif not st.session_state.api_key:
+    st.session_state.api_key = os.getenv(
+        "GROQ_API_KEY",
+        "",
+    ).strip()
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
+st.markdown(
+    """
+    <div class="hero">
+
+        <div class="eyebrow">
+            Adaptive Interview Intelligence
+        </div>
+
+        <h1>
+            Practice against the job —
+            with text or voice.
+        </h1>
+
+        <div class="muted">
+            Build your evidence pack, select an interview mode
+            and categories, then practice with an adaptive AI
+            interviewer.
+        </div>
+
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+
+# ============================================================
+# API KEY PANEL
+# ============================================================
+
+with st.expander(
+    "🔐 Groq API Configuration",
+    expanded=not bool(st.session_state.api_key),
+):
+
+    st.markdown(
+        "### Groq API Key"
+    )
+
+    st.caption(
+        "Enter your Groq API key here for this session. "
+        "For Streamlit Cloud production deployments, "
+        "you can also store GROQ_API_KEY in Streamlit Secrets."
+    )
+
+    entered_api_key = st.text_input(
+        "Groq API Key",
+        value=st.session_state.api_key,
+        type="password",
+        placeholder="gsk_...",
+        help="Your key is used only to call the Groq API.",
+    )
+
+    if entered_api_key.strip():
+
+        st.session_state.api_key = (
+            entered_api_key.strip()
+        )
+
+        st.success(
+            "Groq API key is configured."
+        )
+
+    else:
+
+        st.warning(
+            "Enter a Groq API key before building "
+            "the evidence pack or starting the interview."
+        )
+
+
 # ============================================================
 # TABS
 # ============================================================
@@ -12,16 +1099,20 @@ setup_tab, interview_tab, analytics_tab, report_tab = st.tabs(
     ]
 )
 
+
 # ============================================================
-# INTERVIEW SETUP
+# INTERVIEW SETUP TAB
 # ============================================================
 
 with setup_tab:
 
-    st.markdown("## ⚙️ Interview Setup")
+    st.markdown(
+        "## ⚙️ Interview Setup"
+    )
+
     st.caption(
-        "Configure the primary interview style and the specific categories "
-        "you want Intervia to cover."
+        "Configure the primary interview style and "
+        "specific categories."
     )
 
     # --------------------------------------------------------
@@ -30,18 +1121,10 @@ with setup_tab:
 
     mode = st.selectbox(
         "Interview Mode",
-        [
-            "Mixed",
-            "Technical",
-            "Behavioral",
-            "Case / Situational",
-            "HR / Screening",
-            "Leadership",
-        ],
+        INTERVIEW_MODES,
         disabled=st.session_state.started,
         help=(
-            "Select the primary style of interview. "
-            "The AI interviewer uses this as the main questioning direction."
+            "Choose the primary interview style."
         ),
     )
 
@@ -51,21 +1134,12 @@ with setup_tab:
 
     categories = st.multiselect(
         "Interview Categories",
-        [
-            "Behavioral & Situational 🎭",
-            "Technical & Role-Specific 💻",
-            "HR & Screening Basics 🤝",
-            "Leadership & Management 👔",
-            "Case & Analytical Interviews 📊",
-            "Competency & Skill-Based 🧠",
-            "Reverse Interviewing — Questions for the Employer 🔍",
-        ],
+        CATEGORIES,
         default=st.session_state.categories,
         disabled=st.session_state.started,
         help=(
-            "Select one or more categories. "
-            "The adaptive strategy agent balances these categories "
-            "throughout the interview."
+            "Choose one or more areas that the "
+            "adaptive interviewer should cover."
         ),
     )
 
@@ -75,20 +1149,33 @@ with setup_tab:
     # SESSION DURATION
     # --------------------------------------------------------
 
+    duration_options = list(
+        DURATIONS.keys()
+    )
+
+    current_duration_index = (
+        duration_options.index(
+            "30 Minutes"
+        )
+        if st.session_state.session_duration
+        not in DURATIONS.values()
+        else list(
+            DURATIONS.values()
+        ).index(
+            st.session_state.session_duration
+        )
+    )
+
     duration_label = st.selectbox(
         "Practice Session Duration",
-        list(DURATIONS.keys()),
-        index=(
-            0
-            if st.session_state.session_duration == 30
-            else list(DURATIONS.values()).index(
-                st.session_state.session_duration
-            )
-        ),
+        duration_options,
+        index=current_duration_index,
         disabled=st.session_state.started,
     )
 
-    duration_minutes = DURATIONS[duration_label]
+    duration_minutes = DURATIONS[
+        duration_label
+    ]
 
     # --------------------------------------------------------
     # QUESTION FORMAT
@@ -96,18 +1183,18 @@ with setup_tab:
 
     question_mode = st.radio(
         "Question Format",
-        ["Text Questions", "Audio Questions"],
+        [
+            "Text Questions",
+            "Audio Questions",
+        ],
         index=(
             0
-            if st.session_state.question_mode == "Text Questions"
+            if st.session_state.question_mode
+            == "Text Questions"
             else 1
         ),
         disabled=st.session_state.started,
         horizontal=True,
-        help=(
-            "Text Questions displays the question on screen. "
-            "Audio Questions also reads the question aloud."
-        ),
     )
 
     # --------------------------------------------------------
@@ -116,19 +1203,19 @@ with setup_tab:
 
     answer_mode = st.radio(
         "Answer Format",
-        ["⌨️ Type Answers", "🎙️ Speak Answers"],
+        [
+            "⌨️ Type Answers",
+            "🎙️ Speak Answers",
+        ],
         index=(
             0
-            if st.session_state.answer_mode.startswith("⌨")
+            if st.session_state.answer_mode.startswith(
+                "⌨"
+            )
             else 1
         ),
         disabled=st.session_state.started,
         horizontal=True,
-        help=(
-            "Type Answers uses a text box. "
-            "Speak Answers records your response and sends it "
-            "to Groq Whisper for transcription."
-        ),
     )
 
     # --------------------------------------------------------
@@ -139,10 +1226,6 @@ with setup_tab:
         "Company / Role Web Research",
         value=False,
         disabled=st.session_state.started,
-        help=(
-            "Optionally research the company and role context "
-            "before starting the interview."
-        ),
     )
 
     # --------------------------------------------------------
@@ -153,10 +1236,6 @@ with setup_tab:
         "Camera Presentation Snapshot",
         value=st.session_state.camera_enabled,
         disabled=st.session_state.started,
-        help=(
-            "Optional snapshot analysis of observable "
-            "presentation/framing cues."
-        ),
     )
 
     # --------------------------------------------------------
@@ -165,37 +1244,41 @@ with setup_tab:
 
     speech_language = st.selectbox(
         "Question Voice",
-        ["English (US)", "English (UK)"],
+        [
+            "English (US)",
+            "English (UK)",
+        ],
         index=0,
         disabled=st.session_state.started,
     )
 
     speech_locale = (
         "en-US"
-        if speech_language == "English (US)"
+        if speech_language
+        == "English (US)"
         else "en-GB"
     )
 
     # --------------------------------------------------------
-    # AI ANSWER LENGTH
+    # PRACTICE ANSWER LENGTH
     # --------------------------------------------------------
 
     answer_length = st.selectbox(
         "AI Practice-Answer Length",
-        ["Short", "Standard", "Detailed"],
+        [
+            "Short",
+            "Standard",
+            "Detailed",
+        ],
         disabled=st.session_state.started,
     )
 
     st.divider()
 
-    st.caption(
-        "💡 Choose the interview mode and categories once. "
-        "Intervia will keep them fixed throughout the session."
-    )
-
-    st.caption(
-        "🔐 Production: keep your Groq API key in Streamlit Secrets "
-        "instead of committing it to GitHub."
+    st.info(
+        "Choose Interview Mode and Interview Categories "
+        "before starting. These settings remain fixed "
+        "during the interview."
     )
 
     # --------------------------------------------------------
@@ -204,54 +1287,1272 @@ with setup_tab:
 
     if not st.session_state.started:
 
-        st.session_state.session_duration = duration_minutes
+        st.session_state.session_duration = (
+            duration_minutes
+        )
 
-        st.session_state.question_mode = question_mode
+        st.session_state.question_mode = (
+            question_mode
+        )
 
-        st.session_state.answer_mode = answer_mode
+        st.session_state.answer_mode = (
+            answer_mode
+        )
 
         st.session_state.categories = (
             categories
             if categories
-            else [
-                "Behavioral & Situational 🎭",
-                "Technical & Role-Specific 💻",
-                "HR & Screening Basics 🤝",
-                "Leadership & Management 👔",
-                "Case & Analytical Interviews 📊",
-                "Competency & Skill-Based 🧠",
-                "Reverse Interviewing — Questions for the Employer 🔍",
-            ]
+            else CATEGORIES[:]
         )
 
-        st.session_state.company = ""
+        st.session_state.camera_enabled = (
+            camera_enabled
+        )
 
-        st.session_state.company_track = ""
 
-        st.session_state.camera_enabled = camera_enabled
+# ============================================================
+# BEFORE INTERVIEW
+# ============================================================
+
+if not st.session_state.started:
+
+    st.info(
+        "Before starting: configure your Interview Mode, "
+        "Interview Categories, question format, answer format "
+        "and session duration."
+    )
+
+
+# ============================================================
+# BUILD EVIDENCE PACK
+# ============================================================
+
+left, right = st.columns(
+    [1.35, 1]
+)
+
+with left:
+
+    st.markdown(
+        "### 1. Build the Evidence Pack"
+    )
+
+    target_role = st.text_input(
+        "Target Role",
+        value=st.session_state.target_role,
+        placeholder="Example: AI Engineer",
+        disabled=st.session_state.started,
+    )
+
+    st.session_state.target_role = (
+        target_role.strip()
+    )
+
+    cv_file = st.file_uploader(
+        "CV / Resume",
+        type=[
+            "pdf",
+            "docx",
+            "txt",
+        ],
+        key="cv",
+    )
+
+    jd_file = st.file_uploader(
+        "Job Description",
+        type=[
+            "pdf",
+            "docx",
+            "txt",
+        ],
+        key="jd",
+    )
+
+    jd_text = st.text_area(
+        "Or paste the Job Description",
+        height=150,
+        placeholder=(
+            "Paste the JD here if you do not "
+            "have a file."
+        ),
+    )
+
+    company = st.text_input(
+        "Company Name",
+        value=st.session_state.company,
+        placeholder="Optional",
+        disabled=st.session_state.started,
+    )
+
+    company_track = st.text_area(
+        "Optional Company-Specific Question Context",
+        height=90,
+        placeholder=(
+            "Paste factual, publicly sourced "
+            "company interview themes or questions."
+        ),
+        disabled=st.session_state.started,
+    )
+
+    if st.button(
+        "Build Evidence Pack",
+        type="primary",
+        use_container_width=True,
+        disabled=st.session_state.started,
+    ):
+
+        api_key = st.session_state.api_key.strip()
+
+        if not api_key:
+
+            st.error(
+                "Enter a Groq API key first."
+            )
+
+        elif not target_role.strip():
+
+            st.error(
+                "Enter the target role."
+            )
+
+        elif not cv_file:
+
+            st.error(
+                "Upload a CV / Resume."
+            )
+
+        elif not (
+            jd_file
+            or jd_text.strip()
+        ):
+
+            st.error(
+                "Upload or paste the Job Description."
+            )
+
+        else:
+
+            st.session_state.company = (
+                company.strip()
+            )
+
+            st.session_state.company_track = (
+                company_track
+            )
+
+            try:
+
+                cv_text = extract_uploaded_text(
+                    cv_file
+                )
+
+                final_jd = (
+                    extract_uploaded_text(
+                        jd_file
+                    )
+                    if jd_file
+                    else jd_text
+                )
+
+                evidence_agent = EvidenceAgent()
+
+                st.session_state.evidence = (
+                    evidence_agent.build(
+                        cv_text=safe_clamp(
+                            cv_text,
+                            14000,
+                        ),
+                        jd_text=safe_clamp(
+                            final_jd,
+                            12000,
+                        ),
+                        target_role=target_role,
+                        industry=(
+                            "Not specified — grounded "
+                            "in CV/JD and role context"
+                        ),
+                    )
+                )
+
+                st.session_state.research = None
+                st.session_state.turns = []
+                st.session_state.question = None
+                st.session_state.started = False
+                st.session_state.started_at = None
+
+                if use_research:
+
+                    try:
+
+                        gateway = GroqGateway(
+                            api_key
+                        )
+
+                        st.session_state.research = (
+                            ResearchAgent(
+                                gateway
+                            ).run(
+                                target_role,
+                                "Not specified — grounded "
+                                "in CV/JD and role context",
+                                safe_clamp(
+                                    final_jd,
+                                    6000,
+                                ),
+                                company=company,
+                                company_track=company_track,
+                            )
+                        )
+
+                    except Exception as exc:
+
+                        st.warning(
+                            "Research unavailable; "
+                            f"continuing without it. {exc}"
+                        )
+
+                st.success(
+                    "Evidence pack created successfully."
+                )
+
+            except Exception as exc:
+
+                st.error(
+                    "Evidence pack creation failed."
+                )
+
+                st.code(
+                    str(exc),
+                    language="text",
+                )
+
+
+# ============================================================
+# AGENT COCKPIT
+# ============================================================
+
+with right:
+
+    st.markdown(
+        "### Agent Cockpit"
+    )
+
+    agents_status = [
+        (
+            "Evidence Intelligence",
+            "READY"
+            if st.session_state.evidence
+            else "WAITING",
+        ),
+        (
+            "Career & Market Research",
+            "READY"
+            if st.session_state.research
+            else (
+                "OPTIONAL"
+                if not use_research
+                else "WAITING"
+            ),
+        ),
+        (
+            "Interview Strategy",
+            "ACTIVE"
+            if st.session_state.started
+            else "READY",
+        ),
+        (
+            "AI Interviewer",
+            "ACTIVE"
+            if st.session_state.question
+            else "READY",
+        ),
+        (
+            "Performance Coach",
+            "READY",
+        ),
+    ]
+
+    for name, status in agents_status:
+
+        st.markdown(
+            f"""
+            <div class="agent">
+
+                <span>
+                    {escape(name)}
+                </span>
+
+                <span class="status">
+                    {escape(status)}
+                </span>
+
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        "### Session Design"
+    )
+
+    st.markdown(
+        f"""
+        <div class="card">
+
+            <b>Interview Mode</b>
+            <br>
+            <span class="small">
+                {escape(mode)}
+            </span>
+
+            <br><br>
+
+            <b>Interview Categories</b>
+            <br>
+            <span class="small">
+                {len(categories)} selected
+            </span>
+
+            <br><br>
+
+            <b>Duration</b>
+            <br>
+            <span class="small">
+                {escape(duration_label)}
+            </span>
+
+            <br><br>
+
+            <b>Question Format</b>
+            <br>
+            <span class="small">
+                {escape(question_mode)}
+            </span>
+
+            <br><br>
+
+            <b>Answer Format</b>
+            <br>
+            <span class="small">
+                {escape(answer_mode)}
+            </span>
+
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# EVIDENCE SNAPSHOT
+# ============================================================
+
+if st.session_state.evidence:
+
+    ev = st.session_state.evidence
+
+    st.markdown(
+        "### Evidence Snapshot"
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Candidate Facts",
+        len(
+            ev.get(
+                "candidate_facts",
+                [],
+            )
+        ),
+    )
+
+    c2.metric(
+        "JD Requirements",
+        len(
+            ev.get(
+                "jd_requirements",
+                [],
+            )
+        ),
+    )
+
+    c3.metric(
+        "Skill Gaps",
+        len(
+            ev.get(
+                "gaps",
+                [],
+            )
+        ),
+    )
+
+    with st.expander(
+        "View Grounding Data"
+    ):
+
+        st.write(
+            "**Candidate Evidence**",
+            ev.get(
+                "candidate_facts",
+                [],
+            ),
+        )
+
+        st.write(
+            "**JD Requirements**",
+            ev.get(
+                "jd_requirements",
+                [],
+            ),
+        )
+
+        st.write(
+            "**Matched Skills**",
+            ev.get(
+                "matches",
+                [],
+            ),
+        )
+
+        st.write(
+            "**Gaps / Unknowns**",
+            ev.get(
+                "gaps",
+                [],
+            ),
+        )
+
+
+# ============================================================
+# START INTERVIEW
+# ============================================================
+
+if (
+    st.session_state.evidence
+    and not st.session_state.started
+):
+
+    if st.button(
+        "🚀 Start Complete Adaptive Interview",
+        type="primary",
+        use_container_width=True,
+    ):
+
+        api_key = (
+            st.session_state.api_key.strip()
+        )
+
+        if not categories:
+
+            st.error(
+                "Select at least one interview category."
+            )
+
+        elif not api_key:
+
+            st.error(
+                "Groq API key is required."
+            )
+
+        else:
+
+            try:
+
+                gateway = GroqGateway(
+                    api_key
+                )
+
+                strategy = StrategyAgent()
+
+                interviewer = InterviewerAgent(
+                    gateway
+                )
+
+                now = time.time()
+
+                st.session_state.started_at = now
+
+                elapsed, remaining, _ = (
+                    duration_state(
+                        now,
+                        duration_minutes,
+                    )
+                )
+
+                target_count = question_target(
+                    duration_minutes,
+                    elapsed,
+                    0,
+                )
+
+                plan = strategy.plan(
+                    [],
+                    mode,
+                    duration_label,
+                    st.session_state.evidence,
+                    categories=categories,
+                    remaining_minutes=round(
+                        remaining / 60,
+                        1,
+                    ),
+                    target_questions=target_count,
+                )
+
+                q = interviewer.ask_question(
+                    st.session_state.evidence,
+                    st.session_state.research,
+                    plan,
+                    target_role,
+                    (
+                        "Not specified — grounded "
+                        "in CV/JD and role context"
+                    ),
+                    mode,
+                    company=company,
+                )
+
+                st.session_state.question = q
+
+                st.session_state.started = True
+
+                st.session_state.session_duration = (
+                    duration_minutes
+                )
+
+                st.session_state.question_mode = (
+                    question_mode
+                )
+
+                st.session_state.answer_mode = (
+                    answer_mode
+                )
+
+                st.session_state.categories = (
+                    categories
+                )
+
+                st.session_state.company = (
+                    company
+                )
+
+                st.session_state.camera_enabled = (
+                    camera_enabled
+                )
+
+                st.rerun()
+
+            except Exception as exc:
+
+                st.error(
+                    "The adaptive interview could not "
+                    "generate Question 1."
+                )
+
+                st.code(
+                    str(exc),
+                    language="text",
+                )
+
+
+# ============================================================
+# LIVE INTERVIEW
+# ============================================================
+
+if (
+    st.session_state.started
+    and st.session_state.question
+):
+
+    st.markdown("---")
+
+    st.markdown(
+        "### 2. Live Interview Studio"
+    )
+
+    elapsed, remaining, expired = (
+        duration_state(
+            st.session_state.started_at,
+            st.session_state.session_duration,
+        )
+    )
+
+    turn_no = (
+        len(
+            st.session_state.turns
+        )
+        + 1
+    )
+
+    target_count = question_target(
+        st.session_state.session_duration,
+        elapsed,
+        len(
+            st.session_state.turns
+        ),
+    )
+
+    progress = min(
+        1.0,
+        len(
+            st.session_state.turns
+        )
+        / max(
+            1,
+            target_count,
+        ),
+    )
+
+    top1, top2, top3 = st.columns(
+        [1.6, 1, 1]
+    )
+
+    with top1:
+
+        st.progress(
+            progress,
+            text=(
+                f"Question {turn_no} · "
+                f"adaptive target {target_count}"
+            ),
+        )
+
+    with top2:
+
+        st.metric(
+            "Elapsed",
+            f"{int(elapsed // 60):02d}:"
+            f"{int(elapsed % 60):02d}",
+        )
+
+    with top3:
+
+        render_timer(
+            st.session_state.started_at,
+            st.session_state.session_duration,
+        )
+
+    if expired:
+
+        st.warning(
+            "Your selected practice session time "
+            "has ended. Your report is ready below."
+        )
+
+        st.session_state.question = None
+
+    else:
+
+        q_obj = (
+            st.session_state.question
+            if isinstance(
+                st.session_state.question,
+                dict,
+            )
+            else {
+                "category": "General",
+                "question": str(
+                    st.session_state.question
+                ),
+            }
+        )
+
+        question_text = (
+            q_obj["question"]
+            .strip()
+        )
+
+        category = q_obj.get(
+            "category",
+            "General",
+        )
+
+        st.markdown(
+            f"""
+            <span class="category">
+                {escape(category)}
+            </span>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            f"""
+            <div class="question">
+                {escape(question_text)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        render_speech_controls(
+            question_text,
+            f"question_{turn_no}",
+            "Generated interview question",
+            speech_locale,
+            autoplay=(
+                st.session_state.question_mode
+                == "Audio Questions"
+            ),
+        )
+
+        if (
+            st.session_state.question_mode
+            == "Audio Questions"
+        ):
+
+            st.caption(
+                "Audio mode: the question is spoken "
+                "automatically when available."
+            )
+
+        st.markdown(
+            "#### Your Answer"
+        )
+
+        st.caption(
+            "Answer mode locked for this session: "
+            f"**{st.session_state.answer_mode}**"
+        )
+
+        answer = ""
+
+        voice_transcript = ""
+
+        audio = None
+
+        if (
+            st.session_state.answer_mode
+            == "⌨️ Type Answers"
+        ):
+
+            answer = st.text_area(
+                "Type your answer",
+                key=f"answer_input_{turn_no}",
+                height=190,
+                placeholder=(
+                    "Answer as if you were "
+                    "in the real interview."
+                ),
+            )
+
+        else:
+
+            audio = st.audio_input(
+                "🎙️ Record your answer",
+                sample_rate=16000,
+                key=f"answer_audio_{turn_no}",
+            )
+
+            st.caption(
+                "Speak naturally. Submit the recording "
+                "when you finish."
+            )
+
+        camera = None
+
+        if st.session_state.camera_enabled:
+
+            camera = st.camera_input(
+                "Optional camera snapshot",
+                key=f"camera_{turn_no}",
+            )
+
+            st.caption(
+                "Camera analysis uses observable "
+                "presentation cues only."
+            )
+
+        submit = st.button(
+            "Submit Answer & Get Coaching",
+            type="primary",
+            use_container_width=True,
+        )
+
+        if submit:
+
+            elapsed_now, remaining_now, expired_now = (
+                duration_state(
+                    st.session_state.started_at,
+                    st.session_state.session_duration,
+                )
+            )
+
+            if expired_now:
+
+                st.warning(
+                    "The session time has ended."
+                )
+
+                st.session_state.question = None
+
+                st.rerun()
+
+            elif not st.session_state.api_key:
+
+                st.error(
+                    "Groq API key is required."
+                )
+
+            else:
+
+                gateway = GroqGateway(
+                    st.session_state.api_key
+                )
+
+                if (
+                    st.session_state.answer_mode
+                    == "🎙️ Speak Answers"
+                    and audio is not None
+                ):
+
+                    try:
+
+                        voice_transcript = (
+                            gateway.transcribe(
+                                audio.getvalue(),
+                                getattr(
+                                    audio,
+                                    "name",
+                                    "answer.wav",
+                                ),
+                            )
+                            .strip()
+                        )
+
+                        answer = voice_transcript
+
+                    except Exception as exc:
+
+                        st.error(
+                            "Voice transcription failed. "
+                            f"{exc}"
+                        )
+
+                else:
+
+                    answer = (
+                        answer
+                        or ""
+                    ).strip()
+
+                if not answer:
+
+                    st.error(
+                        "Provide an answer before submitting."
+                    )
+
+                else:
+
+                    coach = CoachAgent(
+                        gateway
+                    )
+
+                    result = coach.evaluate(
+                        question=question_text,
+                        answer=answer,
+                        evidence=(
+                            st.session_state.evidence
+                        ),
+                        target_role=target_role,
+                        mode=mode,
+                        answer_length=answer_length,
+                    )
+
+                    metrics = (
+                        speech_metrics(answer)
+                        if voice_transcript
+                        else {
+                            "words": len(
+                                answer.split()
+                            ),
+                            "filler_words": None,
+                            "estimated_seconds": None,
+                            "words_per_minute": None,
+                        }
+                    )
+
+                    camera_feedback = None
+
+                    if camera is not None:
+
+                        try:
+
+                            camera_feedback = (
+                                gateway.analyze_camera(
+                                    camera.getvalue(),
+                                    getattr(
+                                        camera,
+                                        "type",
+                                        "image/jpeg",
+                                    ),
+                                )
+                            )
+
+                        except Exception as exc:
+
+                            camera_feedback = {
+                                "available": False,
+                                "error": str(exc),
+                            }
+
+                    result["speech_metrics"] = (
+                        metrics
+                    )
+
+                    result["presentation_cues"] = (
+                        camera_feedback
+                    )
+
+                    st.session_state.turns.append(
+                        {
+                            "question": question_text,
+                            "category": category,
+                            "answer": answer,
+                            "answer_mode": (
+                                "voice"
+                                if voice_transcript
+                                else "text"
+                            ),
+                            "voice_transcript": (
+                                voice_transcript
+                            ),
+                            "feedback": result,
+                            "timestamp": (
+                                datetime.utcnow()
+                                .isoformat(
+                                    timespec="seconds"
+                                )
+                            ),
+                            "elapsed_seconds": round(
+                                elapsed_now,
+                                1,
+                            ),
+                        }
+                    )
+
+                    save_session(
+                        st.session_state.session_id,
+                        target_role,
+                        (
+                            "Not specified — grounded "
+                            "in CV/JD and role context"
+                        ),
+                        st.session_state.turns,
+                    )
+
+                    elapsed_after, remaining_after, expired_after = (
+                        duration_state(
+                            st.session_state.started_at,
+                            st.session_state.session_duration,
+                        )
+                    )
+
+                    if expired_after:
+
+                        st.session_state.question = None
+
+                    else:
+
+                        strategy = StrategyAgent()
+
+                        target_count = question_target(
+                            st.session_state.session_duration,
+                            elapsed_after,
+                            len(
+                                st.session_state.turns
+                            ),
+                        )
+
+                        plan = strategy.plan(
+                            st.session_state.turns,
+                            mode,
+                            duration_label,
+                            st.session_state.evidence,
+                            categories=(
+                                st.session_state.categories
+                            ),
+                            remaining_minutes=round(
+                                remaining_after / 60,
+                                1,
+                            ),
+                            target_questions=target_count,
+                        )
+
+                        interviewer = InterviewerAgent(
+                            gateway
+                        )
+
+                        try:
+
+                            st.session_state.question = (
+                                interviewer.ask_question(
+                                    st.session_state.evidence,
+                                    st.session_state.research,
+                                    plan,
+                                    target_role,
+                                    (
+                                        "Not specified — grounded "
+                                        "in CV/JD and role context"
+                                    ),
+                                    mode,
+                                    company=company,
+                                )
+                            )
+
+                        except Exception as exc:
+
+                            st.error(
+                                "The next adaptive question "
+                                "could not be generated."
+                            )
+
+                            st.code(
+                                str(exc),
+                                language="text",
+                            )
+
+                    st.rerun()
+
+
+# ============================================================
+# LATEST COACHING
+# ============================================================
+
+if (
+    st.session_state.started
+    and st.session_state.turns
+):
+
+    latest = (
+        st.session_state.turns[-1]
+        ["feedback"]
+    )
+
+    st.markdown(
+        "### Latest Coaching"
+    )
+
+    score_keys = [
+        "technical",
+        "relevance",
+        "evidence",
+        "communication",
+        "structure",
+        "confidence",
+    ]
+
+    score_labels = [
+        "Technical",
+        "Relevance",
+        "Evidence",
+        "Communication",
+        "Structure",
+        "Confidence",
+    ]
+
+    cols = st.columns(6)
+
+    for col, key, label in zip(
+        cols,
+        score_keys,
+        score_labels,
+    ):
+
+        col.metric(
+            label,
+            latest.get(
+                "scores",
+                {},
+            ).get(
+                key,
+                0,
+            ),
+        )
+
+    st.metric(
+        "Overall",
+        latest.get(
+            "overall",
+            0,
+        ),
+    )
+
+    st.markdown(
+        '<div class="card">',
+        unsafe_allow_html=True,
+    )
+
+    st.write(
+        "**Strengths**",
+        latest.get(
+            "strengths",
+            [],
+        ),
+    )
+
+    st.write(
+        "**Missing / Improve**",
+        latest.get(
+            "missing_points",
+            [],
+        ),
+    )
+
+    st.write(
+        "**Verification Notes**",
+        latest.get(
+            "verification_notes",
+            [],
+        ),
+    )
+
+    st.write(
+        "**Practice Answer**",
+        latest.get(
+            "practice_answer",
+            "",
+        ),
+    )
+
+    st.write(
+        "**Next Improvement**",
+        latest.get(
+            "next_improvement",
+            "",
+        ),
+    )
+
+    sm = latest.get(
+        "speech_metrics",
+        {},
+    )
+
+    if sm:
+
+        st.write(
+            "**Speech Analytics**",
+            sm,
+        )
+
+    if latest.get(
+        "presentation_cues"
+    ):
+
+        st.write(
+            "**Presentation Cues**",
+            latest[
+                "presentation_cues"
+            ],
+        )
+
+    st.markdown(
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ============================================================
+# CATEGORY READINESS
+# ============================================================
+
+if st.session_state.turns:
+
+    st.markdown(
+        "### Category Readiness"
+    )
+
+    category_scores = defaultdict(list)
+
+    for turn in st.session_state.turns:
+
+        category_scores[
+            turn.get(
+                "category",
+                "General",
+            )
+        ].append(
+            turn.get(
+                "feedback",
+                {},
+            ).get(
+                "overall",
+                0,
+            )
+        )
+
+    readiness_cols = st.columns(
+        min(
+            4,
+            max(
+                1,
+                len(category_scores),
+            ),
+        )
+    )
+
+    for idx, (
+        cat,
+        vals,
+    ) in enumerate(
+        category_scores.items()
+    ):
+
+        readiness_cols[
+            idx
+            % len(readiness_cols)
+        ].metric(
+            cat.split(" ")[0],
+            round(
+                sum(vals)
+                / len(vals)
+            ),
+        )
+
+
+# ============================================================
+# SESSION REPORT
+# ============================================================
+
+if st.session_state.turns:
+
+    st.markdown(
+        "### 3. Session Report"
+    )
+
+    md = build_markdown_report(
+        target_role=target_role,
+        industry=(
+            "Not specified — grounded "
+            "in CV/JD and role context"
+        ),
+        mode=mode,
+        turns=st.session_state.turns,
+        evidence=st.session_state.evidence,
+    )
+
+    pdf = build_pdf_report(
+        target_role=target_role,
+        industry=(
+            "Not specified — grounded "
+            "in CV/JD and role context"
+        ),
+        mode=mode,
+        turns=st.session_state.turns,
+        evidence=st.session_state.evidence,
+    )
+
+    st.download_button(
+        "Download Markdown Report",
+        md,
+        file_name="intervia_report.md",
+        mime="text/markdown",
+    )
+
+    st.download_button(
+        "Download PDF Report",
+        pdf,
+        file_name="intervia_report.pdf",
+        mime="application/pdf",
+    )
 ```
-
-### The UI will now be
-
-**Interview Mode**
-
-`Mixed`
-`Technical`
-`Behavioral`
-`Case / Situational`
-`HR / Screening`
-`Leadership`
-
-**Interview Categories**
-
-☑ Behavioral & Situational 🎭
-☑ Technical & Role-Specific 💻
-☑ HR & Screening Basics 🤝
-☑ Leadership & Management 👔
-☑ Case & Analytical Interviews 📊
-☑ Competency & Skill-Based 🧠
-☑ Reverse Interviewing — Questions for the Employer 🔍
-
-The user can select **one Interview Mode** and **multiple Interview Categories**.
-
-**Important:** Replace the old `# TABS` through the end of the old setup section with the block above. Do **not** keep the old nested `with setup_tab:` block, otherwise you can still get duplicate UI elements.
