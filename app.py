@@ -259,7 +259,7 @@ with setup_tab:
         st.session_state.question_mode = question_mode
         st.session_state.answer_mode = answer_mode
         st.session_state.categories = categories or CATEGORIES[:]
-        st.session_state.company = company
+        st.session_state.company = ""
         st.session_state.company_track = ""
         st.session_state.camera_enabled = camera_enabled
 
