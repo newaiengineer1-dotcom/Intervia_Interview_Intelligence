@@ -286,6 +286,7 @@ with left:
     company_track = st.text_area("Optional company-specific question context", height=90, placeholder="Paste publicly sourced interview themes/questions or a company-specific question bank here. Keep it factual and non-confidential.", disabled=st.session_state.started)
 
     if st.button("Build evidence pack", type="primary", use_container_width=True, disabled=st.session_state.started):
+        api_key = os.getenv("GROQ_API_KEY", "")
         api_key = st.session_state.get("api_key", "")
         if not api_key:
             st.error("Enter a Groq API key first.")
