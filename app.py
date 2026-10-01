@@ -799,8 +799,6 @@ def duration_state(
         remaining,
         remaining <= 0,
     )
-
-
 def question_target(
     duration_minutes: int,
     elapsed_seconds: float,
@@ -812,11 +810,10 @@ def question_target(
     if elapsed_seconds <= 0:
         return base
 
-    average_turn =
-        elapsed_seconds / max(
-            1,
-            completed,
-        )
+    average_turn = elapsed_seconds / max(
+        1,
+        completed,
+    )
 
     projected = int(
         (duration_minutes * 60)
@@ -824,6 +821,17 @@ def question_target(
             average_turn,
             120,
         )
+    )
+
+    return max(
+        3,
+        min(
+            base * 2,
+            max(
+                base,
+                projected,
+            ),
+        ),
     )
 
     return max(
