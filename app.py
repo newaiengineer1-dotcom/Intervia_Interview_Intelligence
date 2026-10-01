@@ -380,7 +380,12 @@ st.markdown(
     span[data-baseweb="tag"] span {
         color: #ffffff !important;
     }
-
+st.markdown(
+    """
+    ...
+    """,
+    unsafe_allow_html=True,
+)
     /* =====================================================
        BUTTONS
        ===================================================== */
