@@ -1017,28 +1017,18 @@ elif not st.session_state.api_key:
 
 st.markdown(
     """
-    <div class="hero">
+    <div class="eyebrow">Adaptive Interview Intelligence</div>
 
-        <div class="eyebrow">
-            Adaptive Interview Intelligence
-        </div>
+    <h1>Practice against the job —<br>
+    with text or voice.</h1>
 
-        <h1>
-            Practice against the job —
-            with text or voice.
-        </h1>
-
-        <div class="muted">
-            Build your evidence pack, select an interview mode
-            and categories, then practice with an adaptive AI
-            interviewer.
-        </div>
-
+    <div class="muted">
+        Build your evidence pack, select an interview mode
+        and categories, then practice with an adaptive AI interviewer.
     </div>
     """,
     unsafe_allow_html=True,
 )
-
 
 # ============================================================
 # API KEY PANEL
