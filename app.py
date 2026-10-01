@@ -210,6 +210,19 @@ with st.sidebar:
     st.markdown("## 🎯 Intervia")
     st.caption("Evidence-Grounded Interview Intelligence")
     api_key = st.text_input("Groq API key", type="password", value=configured_secret("GROQ_API_KEY"))
+
+    if api_key:
+    try:
+        preview_gateway = GroqGateway(api_key)
+
+        st.caption(
+            f"🤖 Groq model: `{preview_gateway.get_model()}`"
+        )
+
+    except Exception:
+        st.caption(
+            "🤖 Groq model: automatic detection unavailable"
+        )
     target_role = st.text_input("Target role", value="Senior Renewable Energy Engineer", disabled=st.session_state.started)
     company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
 
