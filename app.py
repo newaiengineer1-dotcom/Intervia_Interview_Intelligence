@@ -197,13 +197,10 @@ def configured_secret(name: str, default: str = "") -> str:
         value = ""
     return str(value or os.getenv(name, default) or "").strip()
 # ============================================================
-# INTERVIEW TABS
+# TABS
 # ============================================================
 
-setup_tab, 
-interview_tab, 
-analytics_tab, 
-report_tab = st.tabs(
+setup_tab, interview_tab, analytics_tab, report_tab = st.tabs(
     [
         "⚙️ Interview categories and Interview mode",
         "🎤 Live Adaptive Interview",
@@ -211,7 +208,6 @@ report_tab = st.tabs(
         "📄 Final Interview Report",
     ]
 )
-
 with setup_tab:
     # your existing Interview Setup code here
     
