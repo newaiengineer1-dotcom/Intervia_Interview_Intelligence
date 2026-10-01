@@ -206,10 +206,9 @@ with st.sidebar:
     company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
 
     st.markdown("### Interview Setup")
-    setup_tab, = st.tabs(["Interview categories and Interview mode"])
     with setup_tab:
         mode = st.selectbox(
-            "Interview mode",
+            "Interview categories",
             ["Mixed", "Technical", "Behavioral", "Case / Situational", "HR / Screening", "Leadership"],
             disabled=st.session_state.started,
             help="Controls the interviewer's primary question style. Categories below provide the specific areas to test."
