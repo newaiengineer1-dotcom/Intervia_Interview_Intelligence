@@ -2440,6 +2440,10 @@ with analytics_tab:
 # LATEST COACHING
 # ============================================================
 
+# ============================================================
+# LATEST COACHING
+# ============================================================
+
 if (
     st.session_state.started
     and st.session_state.turns
@@ -2454,4 +2458,372 @@ if (
     )
 
     st.markdown(
+        "### 🧠 Latest Performance Coaching"
+    )
 
+    coaching_cols = st.columns(3)
+
+    coaching_cols[0].metric(
+        "Overall",
+        latest.get(
+            "overall",
+            "N/A",
+        ),
+    )
+
+    coaching_cols[1].metric(
+        "Technical",
+        latest.get(
+            "technical",
+            "N/A",
+        ),
+    )
+
+    coaching_cols[2].metric(
+        "Communication",
+        latest.get(
+            "communication",
+            "N/A",
+        ),
+    )
+
+    with st.expander(
+        "View Latest Coaching Details",
+        expanded=True,
+    ):
+
+        if latest.get("strengths"):
+
+            st.markdown(
+                "#### ✅ Strengths"
+            )
+
+            strengths = latest.get(
+                "strengths",
+                [],
+            )
+
+            if isinstance(
+                strengths,
+                list,
+            ):
+
+                for item in strengths:
+
+                    st.markdown(
+                        f"- {escape(str(item))}"
+                    )
+
+            else:
+
+                st.write(
+                    strengths
+                )
+
+        if latest.get("improvements"):
+
+            st.markdown(
+                "#### 🔧 Improvements"
+            )
+
+            improvements = latest.get(
+                "improvements",
+                [],
+            )
+
+            if isinstance(
+                improvements,
+                list,
+            ):
+
+                for item in improvements:
+
+                    st.markdown(
+                        f"- {escape(str(item))}"
+                    )
+
+            else:
+
+                st.write(
+                    improvements
+                )
+
+        if latest.get("model_answer"):
+
+            st.markdown(
+                "#### 💡 Suggested Answer"
+            )
+
+            st.info(
+                str(
+                    latest.get(
+                        "model_answer"
+                    )
+                )
+            )
+
+        if latest.get("feedback"):
+
+            st.markdown(
+                "#### 📝 Coaching Feedback"
+            )
+
+            st.write(
+                latest.get(
+                    "feedback"
+                )
+            )
+
+
+# ============================================================
+# FINAL INTERVIEW REPORT
+# ============================================================
+
+with report_tab:
+
+    st.markdown(
+        "### 📄 Final Interview Report"
+    )
+
+    if not st.session_state.turns:
+
+        st.info(
+            "Complete at least one interview answer "
+            "to generate the final report."
+        )
+
+    else:
+
+        report_data = {
+            "session_id": st.session_state.session_id,
+            "target_role": st.session_state.target_role,
+            "company": st.session_state.company,
+            "mode": mode,
+            "duration_minutes": (
+                st.session_state.session_duration
+            ),
+            "categories": (
+                st.session_state.categories
+            ),
+            "evidence": (
+                st.session_state.evidence
+            ),
+            "research": (
+                st.session_state.research
+            ),
+            "turns": (
+                st.session_state.turns
+            ),
+        }
+
+        st.markdown(
+            "#### Session Summary"
+        )
+
+        r1, r2, r3 = st.columns(3)
+
+        r1.metric(
+            "Questions",
+            len(
+                st.session_state.turns
+            ),
+        )
+
+        scores = []
+
+        for turn in st.session_state.turns:
+
+            value = (
+                turn.get(
+                    "feedback",
+                    {},
+                ).get(
+                    "overall",
+                    0,
+                )
+            )
+
+            try:
+
+                scores.append(
+                    float(value)
+                )
+
+            except (
+                TypeError,
+                ValueError,
+            ):
+
+                pass
+
+        report_average = (
+            round(
+                sum(scores)
+                / len(scores),
+                1,
+            )
+            if scores
+            else 0
+        )
+
+        r2.metric(
+            "Average Score",
+            report_average,
+        )
+
+        r3.metric(
+            "Role",
+            st.session_state.target_role
+            or "Not specified",
+        )
+
+        st.divider()
+
+        try:
+
+            markdown_report = (
+                build_markdown_report(
+                    report_data
+                )
+            )
+
+        except TypeError:
+
+            try:
+
+                markdown_report = (
+                    build_markdown_report(
+                        st.session_state.turns
+                    )
+                )
+
+            except Exception as exc:
+
+                markdown_report = (
+                    "Report generation failed: "
+                    + friendly_groq_error(
+                        exc
+                    )
+                )
+
+        except Exception as exc:
+
+            markdown_report = (
+                "Report generation failed: "
+                + friendly_groq_error(
+                    exc
+                )
+            )
+
+        st.markdown(
+            "#### Report Preview"
+        )
+
+        st.markdown(
+            markdown_report
+        )
+
+        st.download_button(
+            "⬇️ Download Markdown Report",
+            data=markdown_report,
+            file_name=(
+                "intervia_interview_report.md"
+            ),
+            mime="text/markdown",
+            use_container_width=True,
+        )
+
+        try:
+
+            pdf_report = (
+                build_pdf_report(
+                    report_data
+                )
+            )
+
+            if pdf_report:
+
+                st.download_button(
+                    "📥 Download PDF Report",
+                    data=pdf_report,
+                    file_name=(
+                        "intervia_interview_report.pdf"
+                    ),
+                    mime="application/pdf",
+                    use_container_width=True,
+                )
+
+        except TypeError:
+
+            try:
+
+                pdf_report = (
+                    build_pdf_report(
+                        st.session_state.turns
+                    )
+                )
+
+                if pdf_report:
+
+                    st.download_button(
+                        "📥 Download PDF Report",
+                        data=pdf_report,
+                        file_name=(
+                            "intervia_interview_report.pdf"
+                        ),
+                        mime="application/pdf",
+                        use_container_width=True,
+                    )
+
+            except Exception as exc:
+
+                st.warning(
+                    "PDF report is unavailable: "
+                    + friendly_groq_error(
+                        exc
+                    )
+                )
+
+        except Exception as exc:
+
+            st.warning(
+                "PDF report is unavailable: "
+                + friendly_groq_error(
+                    exc
+                )
+            )
+
+
+# ============================================================
+# FOOTER
+# ============================================================
+
+st.markdown(
+    """
+    <div style="
+        margin-top:40px;
+        padding:22px;
+        border-top:1px solid #2b4168;
+        text-align:center;
+        color:#91a3bf;
+    ">
+
+        <div style="
+            color:#d8e2f4;
+            font-weight:800;
+            font-size:15px;
+        ">
+            Intervia — Interview Intelligence
+        </div>
+
+        <div style="
+            margin-top:6px;
+            font-size:12px;
+        ">
+            AI-assisted interview practice powered by Groq.
+        </div>
+
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
