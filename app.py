@@ -206,6 +206,17 @@ with st.sidebar:
     company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
 
     st.markdown("### Interview Setup")
+    setup_tab, interview_tab, report_tab = st.tabs(
+    [
+        "Interview categories and Interview mode",
+        "Live Adaptive Interview",
+        "Session Report",
+    ]
+)
+
+with setup_tab:
+    # your existing Interview Setup code here
+    
     with setup_tab:
         mode = st.selectbox(
             "Interview categories",
