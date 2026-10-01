@@ -1,0 +1,72 @@
+{
+  "product": "Intervia — Interview Intelligence",
+  "working_tagline": "Evidence-Grounded Adaptive Interview Intelligence",
+  "architecture": {
+    "logical_agents": 5,
+    "llm_heavy_agents_per_turn": 2,
+    "deterministic_agents": [
+      "Evidence Intelligence",
+      "Interview Strategy"
+    ],
+    "optional_agent": "Career & Market Research",
+    "llm_agents": [
+      "AI Interviewer",
+      "Performance Coach"
+    ],
+    "crewai": "optional"
+  },
+  "stack": [
+    "Python 3.12",
+    "Streamlit",
+    "Groq",
+    "GPT-OSS 120B",
+    "GPT-OSS 20B",
+    "Whisper Large V3 Turbo",
+    "TF-IDF",
+    "SQLite",
+    "ReportLab"
+  ],
+  "entrypoint": "app.py",
+  "deployment": "Streamlit Community Cloud",
+  "production_next_steps": [
+    "auth",
+    "managed database",
+    "encrypted object storage",
+    "billing",
+    "observability",
+    "evaluation suite",
+    "privacy/data deletion controls"
+  ],
+  "roi_analysis": {
+    "document": "docs/16_Complete_ROI_Analysis.md",
+    "financial_model": "financial_model/Intervia_ROI_Financial_Model.xlsx",
+    "notes": "Illustrative planning assumptions; replace with observed operating data."
+  },
+  "voice_interview_update": {
+    "question_audio": "Browser-native SpeechSynthesis Play/Stop controls for every generated question",
+    "answer_modes": [
+      "text",
+      "microphone voice"
+    ],
+    "transcription": "Groq Whisper Large V3 Turbo",
+    "transcript_playback": "Browser-native SpeechSynthesis",
+    "additional_runtime_dependency": false
+  },
+  "version": "interview-setup-tab-2026-10-01",
+  "features_added": [
+    "session-level question modality: text or audio",
+    "session-level answer modality: type or speak",
+    "automatic question speech completion/stop",
+    "30/60/120/180 minute adaptive sessions",
+    "seven core interview categories",
+    "company-specific track context",
+    "speech filler/pacing analytics",
+    "optional camera presentation snapshot",
+    "category readiness dashboard",
+    "single professional Interview categories and Interview mode tab",
+    "removed visible Industry input from Interview Setup",
+    "kept Text Questions / Audio Questions and Type Answers / Speak Answers unchanged",
+    "added truthful camera-capture fallback without sensitive visual inference",
+    "added InterviewerAgent.ask_question compatibility alias for Streamlit app"
+  ]
+}
