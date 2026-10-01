@@ -189,10 +189,19 @@ for key, default in {
     if key not in st.session_state:
         st.session_state[key] = default
 
+def configured_secret(name: str, default: str = "") -> str:
+    """Read Streamlit Cloud secrets first, then local environment variables."""
+    try:
+        value = st.secrets.get(name, "")
+    except Exception:
+        value = ""
+    return str(value or os.getenv(name, default) or "").strip()
+
+
 with st.sidebar:
     st.markdown("## 🎯 Intervia")
     st.caption("Evidence-Grounded Interview Intelligence")
-    api_key = st.text_input("Groq API key", type="password", value=os.getenv("GROQ_API_KEY", ""))
+    api_key = st.text_input("Groq API key", type="password", value=configured_secret("GROQ_API_KEY"))
     target_role = st.text_input("Target role", value="Senior Renewable Energy Engineer", disabled=st.session_state.started)
     company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
 
@@ -345,16 +354,34 @@ if st.session_state.evidence:
                 elapsed, remaining, _ = duration_state(now, duration_minutes)
                 target_count = question_target(duration_minutes, elapsed, 0)
                 plan = strategy.plan([], mode, duration_label, ev, categories=categories, remaining_minutes=round(remaining/60, 1), target_questions=target_count)
-                q = interviewer.ask_question(ev, st.session_state.research, plan, target_role, "Not specified — grounded in CV/JD and role context", mode, company=company)
-                st.session_state.question = q
-                st.session_state.started = True
-                st.session_state.session_duration = duration_minutes
-                st.session_state.question_mode = question_mode
-                st.session_state.answer_mode = answer_mode
-                st.session_state.categories = categories
-                st.session_state.company = company
-                st.session_state.camera_enabled = camera_enabled
-                st.rerun()
+                try:
+                    q = interviewer.ask_question(
+                        ev,
+                        st.session_state.research,
+                        plan,
+                        target_role,
+                        "Not specified — grounded in CV/JD and role context",
+                        mode,
+                        company=company,
+                    )
+                except Exception as exc:
+                    st.error("❌ The adaptive interview could not generate Question 1.")
+                    st.code(str(exc), language="text")
+                    st.info(
+                        "The app now keeps the session stopped instead of crashing. "
+                        "If this is a 403, enable at least one accessible Groq model in your Groq project. "
+                        "If it is a 429, wait for the rate-limit window or use a shorter session."
+                    )
+                else:
+                    st.session_state.question = q
+                    st.session_state.started = True
+                    st.session_state.session_duration = duration_minutes
+                    st.session_state.question_mode = question_mode
+                    st.session_state.answer_mode = answer_mode
+                    st.session_state.categories = categories
+                    st.session_state.company = company
+                    st.session_state.camera_enabled = camera_enabled
+                    st.rerun()
 
 if st.session_state.started and st.session_state.question:
     st.markdown("---")
@@ -476,15 +503,20 @@ if st.session_state.started and st.session_state.question:
                             target_questions=target_count,
                         )
                         interviewer = InterviewerAgent(gateway)
-                        st.session_state.question = interviewer.ask_question(
-                            st.session_state.evidence,
-                            st.session_state.research,
-                            plan,
-                            target_role,
-                            "Not specified — grounded in CV/JD and role context",
-                            mode,
-                            company=company,
-                        )
+                        try:
+                            st.session_state.question = interviewer.ask_question(
+                                st.session_state.evidence,
+                                st.session_state.research,
+                                plan,
+                                target_role,
+                                "Not specified — grounded in CV/JD and role context",
+                                mode,
+                                company=company,
+                            )
+                        except Exception as exc:
+                            st.error("❌ The next adaptive question could not be generated.")
+                            st.code(str(exc), language="text")
+                            st.info("Your completed answer is saved. Fix the Groq access/rate-limit issue and continue the session.")
                     st.rerun()
 
     if st.session_state.turns:

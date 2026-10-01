@@ -1,4 +1,5 @@
 import json
+import os
 import re
 from typing import Any
 
@@ -23,21 +24,114 @@ def _json(text: str) -> dict:
 
 
 class GroqGateway:
+    """Resilient Groq gateway with model discovery and actionable errors.
+
+    The app prefers GPT-OSS but automatically skips models that the current
+    Groq project/key cannot access. This prevents a single 403 model-permission
+    error from crashing the interview before question #1.
+    """
+
+    MODEL_CANDIDATES = (
+        PRIMARY_MODEL,
+        FALLBACK_MODEL,
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+    )
+
     def __init__(self, api_key: str):
         try:
             from groq import Groq
         except ImportError as exc:
             raise RuntimeError("Install requirements.txt before using Groq features.") from exc
-        self.client = Groq(api_key=api_key)
+        if not api_key or not api_key.strip():
+            raise RuntimeError("Groq API key is empty. Add GROQ_API_KEY in Streamlit Secrets.")
+        self.client = Groq(api_key=api_key.strip())
+        self._resolved_models = None
+
+    def available_models(self) -> list[str]:
+        """Return model IDs visible to the current Groq project/key."""
+        if self._resolved_models is not None:
+            return self._resolved_models
+        try:
+            data = self.client.models.list()
+            ids = []
+            for item in getattr(data, "data", []) or []:
+                model_id = getattr(item, "id", None)
+                if model_id:
+                    ids.append(str(model_id))
+            self._resolved_models = ids
+            return ids
+        except Exception:
+            # A temporary network/proxy problem should not prevent the normal
+            # chat call from attempting the configured model list.
+            self._resolved_models = []
+            return []
+
+    def model_candidates(self) -> list[str]:
+        configured = os.getenv("GROQ_LLM_MODEL", "").strip()
+        preferred = [configured] if configured else []
+        preferred += list(self.MODEL_CANDIDATES)
+        seen = set()
+        ordered = []
+        visible = set(self.available_models())
+
+        for model in preferred:
+            if not model or model in seen:
+                continue
+            seen.add(model)
+            # If models.list() succeeded, use only models visible to this key.
+            if visible and model not in visible:
+                continue
+            ordered.append(model)
+
+        # If model discovery was unavailable, preserve the configured fallback list.
+        if not ordered:
+            for model in preferred:
+                if model and model not in ordered:
+                    ordered.append(model)
+        return ordered
+
+    @staticmethod
+    def _error_message(exc: Exception, attempted: list[str]) -> str:
+        raw = str(exc)
+        lower = raw.lower()
+        if "network settings" in lower or "network" in lower or "connection" in lower or "timeout" in lower or "dns" in lower:
+            return (
+                "Groq network request failed. Check Streamlit Cloud network reachability, proxy/firewall rules, "
+                "and Groq API availability. If the same key works locally but not on Streamlit Cloud, the deployed "
+                "environment may be unable to reach the API. Original error: " + raw
+            )
+        if "403" in lower or "forbidden" in lower or "permission" in lower or "access denied" in lower:
+            return (
+                "Groq denied access to the available model(s). This is usually a Groq "
+                "project/organization model-permission restriction, not a Streamlit code error. "
+                f"Attempted: {', '.join(attempted)}. Open Groq Console → Settings → Organization/Project Limits "
+                "and allow at least one listed model, then redeploy/retry. Groq documents that restricted "
+                "models return HTTP 403. Original error: " + raw
+            )
+        if "401" in lower or "unauthorized" in lower or "invalid api key" in lower:
+            return (
+                "Groq authentication failed (HTTP 401). Check that GROQ_API_KEY is the actual active key "
+                "for the selected Groq project and that no extra spaces/quotes were pasted. Original error: " + raw
+            )
+        if "429" in lower or "rate limit" in lower or "too many requests" in lower:
+            return (
+                "Groq rate limit reached (HTTP 429). The app tried the configured model fallbacks, but the "
+                "request still could not be completed. Use a shorter session/answer, wait for the quota window, "
+                "or use a project with higher limits. Original error: " + raw
+            )
+        return f"Groq request failed after trying {', '.join(attempted) or 'configured models'}: {raw}"
 
     def chat_json(self, system: str, user: str, max_tokens: int = 900) -> dict:
-        prompt = safe_clamp(user, 15000)
+        prompt = safe_clamp(user, 12000)
         last_exc = None
-        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
+        attempted = []
+        for model in self.model_candidates():
+            attempted.append(model)
             try:
                 resp = self.client.chat.completions.create(
                     model=model,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": prompt}],
+                    messages=[{"role": "system", "content": safe_clamp(system, 5000)}, {"role": "user", "content": prompt}],
                     temperature=0.25,
                     max_tokens=max_tokens,
                     response_format={"type": "json_object"},
@@ -45,30 +139,43 @@ class GroqGateway:
                 return _json(resp.choices[0].message.content)
             except Exception as exc:
                 last_exc = exc
-        raise RuntimeError(f"Groq request failed on primary and fallback models: {last_exc}")
+                continue
+        raise RuntimeError(self._error_message(last_exc or RuntimeError("No accessible Groq model found."), attempted))
 
     def chat_text(self, system: str, user: str, max_tokens: int = 250) -> str:
         last_exc = None
-        for model in (PRIMARY_MODEL, FALLBACK_MODEL):
+        attempted = []
+        for model in self.model_candidates():
+            attempted.append(model)
             try:
                 resp = self.client.chat.completions.create(
                     model=model,
-                    messages=[{"role": "system", "content": system}, {"role": "user", "content": safe_clamp(user, 10000)}],
+                    messages=[
+                        {"role": "system", "content": safe_clamp(system, 5000)},
+                        {"role": "user", "content": safe_clamp(user, 7000)},
+                    ],
                     temperature=0.35,
                     max_tokens=max_tokens,
                 )
-                return resp.choices[0].message.content.strip()
+                text = (resp.choices[0].message.content or "").strip()
+                if text:
+                    return text
+                raise RuntimeError("Groq returned an empty response.")
             except Exception as exc:
                 last_exc = exc
-        raise RuntimeError(f"Groq request failed: {last_exc}")
+                continue
+        raise RuntimeError(self._error_message(last_exc or RuntimeError("No accessible Groq model found."), attempted))
 
     def transcribe(self, data: bytes, filename: str) -> str:
-        result = self.client.audio.transcriptions.create(
-            file=(filename or "answer.wav", data),
-            model=WHISPER_MODEL,
-            response_format="text",
-        )
-        return result if isinstance(result, str) else getattr(result, "text", str(result))
+        try:
+            result = self.client.audio.transcriptions.create(
+                file=(filename or "answer.wav", data),
+                model=WHISPER_MODEL,
+                response_format="text",
+            )
+            return result if isinstance(result, str) else getattr(result, "text", str(result))
+        except Exception as exc:
+            raise RuntimeError(self._error_message(exc, [WHISPER_MODEL])) from exc
 
     def analyze_camera(self, data: bytes, mime_type: str = "image/jpeg") -> dict[str, Any]:
         # The MVP intentionally avoids inferring emotions, personality, health or other

@@ -37,3 +37,31 @@ streamlit run app.py
 ```
 
 Keep API keys in Streamlit Secrets for deployment. Do not commit credentials to GitHub.
+
+## Adaptive interview Groq troubleshooting (2026-10-01 update)
+
+The adaptive interviewer now discovers models visible to the current Groq project/key and tries them in this order when available:
+1. `openai/gpt-oss-120b`
+2. `openai/gpt-oss-20b`
+3. `llama-3.3-70b-versatile`
+4. `llama-3.1-8b-instant`
+
+This prevents the interview from crashing simply because the preferred model is restricted. If all accessible models fail, the UI shows the actual Groq error instead of a redacted Streamlit traceback.
+
+### If the UI reports HTTP 403
+A 403 from Groq can mean that the selected model is blocked at the organization or project level. In Groq Console, check **Settings → Organization → Limits** and **Project → Limits**, and allow at least one model from the fallback list. Groq documents that restricted models return HTTP 403.
+
+### If the UI reports HTTP 401
+Replace the key with an active Groq API key. On Streamlit Community Cloud, put it in **App → Settings → Secrets**:
+
+```toml
+GROQ_API_KEY = "gsk_..."
+```
+
+The application reads Streamlit Secrets first and environment variables second. Never commit the key to GitHub.
+
+### If the UI reports HTTP 429
+This is a quota/rate-limit condition, not a Python syntax problem. Use a shorter session, concise answers, wait for the quota window, or use a project with higher limits.
+
+### Important
+The code cannot bypass a Groq organization/project permission block, invalid API key, external network block, or exhausted quota. The updated app now reports these conditions directly and keeps the Streamlit session alive instead of crashing at Question 1.
