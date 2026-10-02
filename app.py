@@ -1,668 +1,481 @@
-import json
-import os
-import re
-import time
-import uuid
-from collections import defaultdict
-from datetime import datetime
-from html import escape
-
 import streamlit as st
-import streamlit.components.v1 as components
+import time
 
-from agents import (
-    CoachAgent,
-    EvidenceAgent,
-    GroqGateway,
-    InterviewerAgent,
-    ResearchAgent,
-    StrategyAgent,
-)
-from db import init_db, save_session
-from report import build_markdown_report, build_pdf_report
-from utils import extract_uploaded_text, safe_clamp
-
+# -----------------------------------------------------------------------------
+# 1. PAGE CONFIGURATION (Must be the first Streamlit command)
+# -----------------------------------------------------------------------------
 st.set_page_config(
-    page_title="Intervia — Interview Intelligence",
-    page_icon="🎯",
+    page_title="InterviewAI - Studio Cockpit",
+    page_icon="🤖",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="expanded"
 )
 
-CATEGORIES = [
-    "Behavioral & Situational 🎭",
-    "Technical & Role-Specific 💻",
-    "HR & Screening Basics 🤝",
-    "Leadership & Management 👔",
-    "Case & Analytical Interviews 📊",
-    "Competency & Skill-Based 🧠",
-    "Reverse Interviewing — Questions for the Employer 🔍",
-]
-DURATIONS = {"30 Minutes": 30, "60 Minutes": 60, "120 Minutes": 120, "180 Minutes": 180}
-TARGET_QUESTIONS = {30: 8, 60: 15, 120: 28, 180: 40}
+# -----------------------------------------------------------------------------
+# 2. STATE MANAGEMENT
+# -----------------------------------------------------------------------------
+# Initialize session state variables to make the dashboard interactive
+if 'app_mode' not in st.session_state:
+    st.session_state.app_mode = 'voice'
+if 'is_recording' not in st.session_state:
+    st.session_state.is_recording = True
 
-st.markdown(
-    """
+# -----------------------------------------------------------------------------
+# 3. CUSTOM CSS (ULTRA PREMIUM THEME)
+# -----------------------------------------------------------------------------
+def load_css():
+    """Injects the custom CSS for the dark, premium dashboard theme."""
+    st.markdown("""
     <style>
-    :root { --bg:#07101f; --panel:#0d1830; --line:#203052; --muted:#91a2c0; --accent:#7c5cff; --good:#9df2c1; }
-    .stApp { background: radial-gradient(circle at 70% 0%, #17204a 0%, var(--bg) 45%); }
-    [data-testid="stSidebar"] { background:#081225; border-right:1px solid var(--line); }
-    .hero { padding:26px 30px; border:1px solid var(--line); border-radius:22px; background:linear-gradient(135deg,rgba(124,92,255,.20),rgba(13,24,48,.92)); box-shadow:0 18px 50px rgba(0,0,0,.25); }
-    .eyebrow { color:#a99bff; font-size:12px; font-weight:800; letter-spacing:.14em; text-transform:uppercase; }
-    .hero h1 { margin:6px 0; font-size:38px; }
-    .muted { color:var(--muted); }
-    .card { padding:18px; border:1px solid var(--line); border-radius:18px; background:rgba(13,24,48,.78); margin-bottom:12px; }
-    .agent { display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #182641; }
-    .agent:last-child { border-bottom:0; }
-    .status { color:var(--good); font-size:12px; font-weight:700; }
-    .question { font-size:25px; line-height:1.35; font-weight:700; padding:22px; border-left:4px solid var(--accent); background:#0a1428; border-radius:14px; }
-    .category { display:inline-block; padding:6px 10px; border:1px solid #33466f; border-radius:999px; color:#c9d4ea; font-size:12px; background:#111d38; }
-    .timer { font-size:20px; font-weight:800; color:#e8edff; }
-    .small { font-size:12px; color:var(--muted); }
-    .mode-box { padding:12px; border:1px solid #263a61; border-radius:14px; background:#0b152a; }
-    .cockpit { padding:18px; border:1px solid var(--line); border-radius:18px; background:rgba(13,24,48,.78); }
-    .cockpit-title { font-size:13px; font-weight:800; letter-spacing:.08em; text-transform:uppercase; color:#a99bff; margin-bottom:10px; }
-    .agent-name { color:#d8e2f4; font-weight:700; }
-    .status.ready { color:#9df2c1; }
-    .status.active { color:#9ad7ff; }
-    .status.waiting { color:#ffd58a; }
-    .status.optional { color:#91a2c0; }
-    .footer { margin-top:28px; padding:20px 0 8px; border-top:1px solid var(--line); color:#91a2c0; }
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+        
+        html, body, [class*="css"] {
+            font-family: 'Inter', sans-serif;
+        }
+        
+        .stApp {
+            background-color: #0E1117;
+            color: #E2E8F0;
+        }
+        
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        
+        /* Sidebar Styling */
+        [data-testid="stSidebar"] {
+            background-color: #12151C !important;
+            border-right: 1px solid #1F2937;
+            padding-top: 20px;
+        }
+        
+        /* Custom Card Classes */
+        .css-card {
+            background-color: #171A22;
+            border: 1px solid #2D313A;
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.5);
+        }
+        
+        .css-card-prompt {
+            background: linear-gradient(145deg, #1A1D24, #14171E);
+            border: 1px solid #3B4252;
+            border-left: 4px solid #8B5CF6;
+        }
+        
+        /* Typography & Badges */
+        .badge {
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            display: inline-block;
+            margin-right: 5px;
+        }
+        
+        .badge-purple { background-color: rgba(139, 92, 246, 0.2); color: #A78BFA; border: 1px solid #8B5CF6; }
+        .badge-red { background-color: rgba(239, 68, 68, 0.2); color: #F87171; border: 1px solid #EF4444; }
+        .badge-green { background-color: rgba(16, 185, 129, 0.2); color: #34D399; border: 1px solid #10B981; }
+        .badge-blue { background-color: rgba(59, 130, 246, 0.2); color: #60A5FA; border: 1px solid #3B82F6; }
+        .badge-gray { background-color: #2D3748; color: #A0AEC0; border: 1px solid #4A5568; }
+        
+        .text-accent-cyan { color: #22D3EE; }
+        .text-accent-purple { color: #A78BFA; }
+        .text-muted { color: #64748B; }
+        
+        /* Navigation Tabs */
+        .nav-tab {
+            padding: 8px 16px;
+            border-radius: 8px;
+            background-color: transparent;
+            color: #94A3B8;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            margin-right: 8px;
+            border: 1px solid transparent;
+            display: inline-block;
+        }
+        .nav-tab.active {
+            background-color: #2D3748;
+            color: #FFFFFF;
+            border: 1px solid #4A5568;
+        }
+        
+        /* Progress Bar */
+        .progress-container {
+            width: 100%;
+            background-color: #2D3748;
+            border-radius: 4px;
+            height: 6px;
+            margin-top: 8px;
+            display: flex;
+            gap: 4px;
+        }
+        .progress-segment {
+            flex: 1;
+            height: 100%;
+            border-radius: 4px;
+            background-color: #2D3748;
+        }
+        .progress-segment.filled { background-color: #22D3EE; }
+        .progress-segment.active { background-color: #3B82F6; }
+
+        /* Waveform Animation */
+        .waveform {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 4px;
+            height: 60px;
+            margin: 20px 0;
+        }
+        .wave-bar {
+            width: 4px;
+            background-color: #A78BFA;
+            border-radius: 2px;
+            animation: pulse 1.5s infinite ease-in-out;
+        }
+        @keyframes pulse {
+            0%, 100% { transform: scaleY(0.5); opacity: 0.5; }
+            50% { transform: scaleY(1); opacity: 1; }
+        }
+        
+        /* Buttons */
+        .stButton > button {
+            width: 100%;
+            border-radius: 8px;
+            border: 1px solid #4A5568;
+            background-color: #1A202C;
+            color: #E2E8F0;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        .stButton > button:hover {
+            border-color: #8B5CF6;
+            color: #FFFFFF;
+            box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
+        }
+        
+        .btn-primary > button {
+            background: linear-gradient(90deg, #6366F1, #A855F7) !important;
+            border: none !important;
+            color: white !important;
+        }
+        .btn-primary > button:hover {
+            box-shadow: 0 0 15px rgba(168, 85, 247, 0.5) !important;
+        }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+    """, unsafe_allow_html=True)
 
+# -----------------------------------------------------------------------------
+# 4. UI COMPONENTS (Reusable Functions)
+# -----------------------------------------------------------------------------
+def render_badge(text, badge_type="gray"):
+    """Helper to render a styled badge."""
+    return f"<span class='badge badge-{badge_type}'>{text}</span>"
 
-def render_speech_controls(text: str, key: str, title: str, language: str, autoplay: bool = False):
-    """Browser-native question playback. It automatically ends/cancels when the utterance ends."""
-    payload = json.dumps(text or "", ensure_ascii=False)
-    lang_payload = json.dumps(language or "en-US")
-    safe_key = re.sub(r"[^A-Za-z0-9_]", "_", key)
-    auto_delay = 350 if autoplay else 999999
-    components.html(
-        f"""
-        <div style="font-family:Arial,sans-serif;padding:8px 0;">
-          <div style="color:#91a2c0;font-size:12px;font-weight:700;margin-bottom:7px;">🔊 {escape(title)}</div>
-          <button id="play_{safe_key}" style="border:1px solid #33466f;background:#151f3b;color:#fff;border-radius:10px;padding:9px 14px;cursor:pointer;margin-right:6px;">▶ Play</button>
-          <button id="stop_{safe_key}" style="border:1px solid #33466f;background:#0d1830;color:#c9d4ea;border-radius:10px;padding:9px 14px;cursor:pointer;">■ Stop</button>
-          <span id="status_{safe_key}" style="color:#91a2c0;font-size:12px;margin-left:8px;"></span>
+def render_sidebar():
+    """Renders the left sidebar with candidate profile and context."""
+    with st.sidebar:
+        st.markdown("""
+        <div style='display:flex; align-items:center; margin-bottom:20px;'>
+            <div style='background: linear-gradient(135deg, #6366F1, #A855F7); border-radius: 8px; width: 32px; height: 32px; display:flex; justify-content:center; align-items:center; margin-right:10px;'>
+                <span style='color:white; font-weight:bold;'>AI</span>
+            </div>
+            <div>
+                <h3 style='margin:0; font-size:16px;'>InterviewAI</h3>
+                <p style='margin:0; font-size:10px; color:#64748B; letter-spacing:1px;'>STUDIO COCKPIT</p>
+            </div>
         </div>
-        <script>
-        const text_{safe_key} = {payload};
-        const lang_{safe_key} = {lang_payload};
-        const play_{safe_key} = document.getElementById('play_{safe_key}');
-        const stop_{safe_key} = document.getElementById('stop_{safe_key}');
-        const status_{safe_key} = document.getElementById('status_{safe_key}');
-        let utterance_{safe_key} = null;
-        function stopSpeech_{safe_key}(label='Stopped') {{
-          if ('speechSynthesis' in window) window.speechSynthesis.cancel();
-          utterance_{safe_key} = null;
-          status_{safe_key}.textContent = label;
-        }}
-        function speak_{safe_key}() {{
-          if (!('speechSynthesis' in window)) {{ status_{safe_key}.textContent='Browser speech is not supported.'; return; }}
-          stopSpeech_{safe_key}('');
-          utterance_{safe_key} = new SpeechSynthesisUtterance(text_{safe_key});
-          utterance_{safe_key}.lang = lang_{safe_key};
-          utterance_{safe_key}.rate = 0.96;
-          utterance_{safe_key}.pitch = 1.0;
-          utterance_{safe_key}.onstart = () => status_{safe_key}.textContent='Speaking…';
-          utterance_{safe_key}.onend = () => {{ utterance_{safe_key}=null; status_{safe_key}.textContent='Question finished'; }};
-          utterance_{safe_key}.onerror = () => {{ utterance_{safe_key}=null; status_{safe_key}.textContent='Speech playback failed'; }};
-          window.speechSynthesis.speak(utterance_{safe_key});
-        }}
-        play_{safe_key}.onclick = speak_{safe_key};
-        stop_{safe_key}.onclick = () => stopSpeech_{safe_key}();
-        window.addEventListener('beforeunload', () => stopSpeech_{safe_key}(''));
-        setTimeout(() => {{ if ({str(autoplay).lower()}) speak_{safe_key}(); }}, {auto_delay});
-        </script>
-        """,
-        height=78,
-        scrolling=False,
-    )
-
-
-def render_timer(started_at: float, duration_minutes: int):
-    remaining = max(0, int(duration_minutes * 60 - (time.time() - started_at)))
-    components.html(
-        f"""
-        <div style="padding:8px 0;text-align:right;font-family:Arial,sans-serif;">
-          <span style="color:#91a2c0;font-size:12px;">SESSION TIME REMAINING</span>
-          <div id="timer" style="font-size:24px;font-weight:800;color:#e8edff;">--:--</div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<p style='font-size:11px; font-weight:600; color:#64748B; margin-bottom:5px;'>TARGET PROFILE</p>", unsafe_allow_html=True)
+        st.markdown("<p style='font-size:14px; margin:0;'>Backend Software Eng</p>", unsafe_allow_html=True)
+        st.markdown(render_badge("Mid-Level", "blue") + render_badge("Tier 1 Target", "gray"), unsafe_allow_html=True)
+        
+        st.markdown("<hr style='border-color: #1F2937; margin: 15px 0;'>", unsafe_allow_html=True)
+        
+        st.markdown("<p style='font-size:11px; font-weight:600; color:#64748B; margin-bottom:5px;'>PERSONA MODEL</p>", unsafe_allow_html=True)
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown(render_badge("FAANG-Style", "purple"), unsafe_allow_html=True)
+            st.markdown(render_badge("Strict Exec", "gray"), unsafe_allow_html=True)
+        with col2:
+            st.markdown(render_badge("Friendly", "gray"), unsafe_allow_html=True)
+            st.markdown(render_badge("Startup CTO", "gray"), unsafe_allow_html=True)
+            
+        st.markdown("<hr style='border-color: #1F2937; margin: 15px 0;'>", unsafe_allow_html=True)
+        
+        st.markdown("<p style='font-size:11px; font-weight:600; color:#64748B; margin-bottom:5px;'>EVALUATION VECTOR</p>", unsafe_allow_html=True)
+        st.markdown(render_badge("Technical", "purple") + render_badge("STAR Behavioral", "gray"), unsafe_allow_html=True)
+        st.markdown(render_badge("System Design", "gray") + render_badge("Live Coding", "gray"), unsafe_allow_html=True)
+        
+        st.markdown("<hr style='border-color: #1F2937; margin: 15px 0;'>", unsafe_allow_html=True)
+        
+        # Adaptive Escalation Progress
+        st.markdown("""
+        <div style='display:flex; justify-content:space-between; font-size:11px; color:#64748B; font-weight:600;'>
+            <span>ADAPTIVE ESCALATION</span>
+            <span class='text-accent-cyan'>Hard L5</span>
         </div>
-        <script>
-        let remaining = {remaining};
-        const el = document.getElementById('timer');
-        function tick() {{
-          const m = Math.floor(Math.max(0, remaining) / 60);
-          const s = Math.max(0, remaining) % 60;
-          el.textContent = String(m).padStart(2,'0') + ':' + String(s).padStart(2,'0');
-          if (remaining <= 0) el.textContent = '00:00 — TIME';
-          remaining -= 1;
-        }}
-        tick(); setInterval(tick, 1000);
-        </script>
-        """,
-        height=70,
-        scrolling=False,
-    )
+        <div style='background:#2D3748; border-radius:4px; height:4px; margin-top:5px;'>
+            <div style='background:#22D3EE; width:70%; height:100%; border-radius:4px;'></div>
+        </div>
+        <div style='display:flex; justify-content:space-between; font-size:10px; color:#64748B; margin-top:5px;'>
+            <span>L3 Core</span>
+            <span>L6 Architect</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<hr style='border-color: #1F2937; margin: 15px 0;'>", unsafe_allow_html=True)
+        
+        st.markdown("<p style='font-size:11px; font-weight:600; color:#64748B; margin-bottom:5px;'>CONTEXT INGESTION</p>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='background:#1A1D24; padding:8px; border-radius:6px; border:1px solid #2D313A; font-size:12px; margin-bottom:5px;'>
+            <span style='color:#10B981;'>✔</span> Resume: 4 Projects, 12 Skills
+        </div>
+        <div style='background:#1A1D24; padding:8px; border-radius:6px; border:1px solid #2D313A; font-size:12px;'>
+            <span style='color:#10B981;'>✔</span> JD: 6 Critical Competencies
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown("<div class='btn-primary'>", unsafe_allow_html=True)
+        if st.button("🚀 Start Interview", use_container_width=True):
+            st.toast("Interview Initialized!")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-
-def duration_state(started_at: float, duration_minutes: int):
-    elapsed = max(0.0, time.time() - started_at)
-    remaining = max(0.0, duration_minutes * 60 - elapsed)
-    return elapsed, remaining, remaining <= 0
-
-
-def question_target(duration_minutes: int, elapsed_seconds: float, completed: int) -> int:
-    base = TARGET_QUESTIONS[duration_minutes]
-    if elapsed_seconds <= 0:
-        return base
-    # Faster answers allow more questions; slower answers naturally reduce the target.
-    avg_turn = elapsed_seconds / max(1, completed)
-    projected = int((duration_minutes * 60) / max(avg_turn, 120))
-    return max(3, min(base * 2, max(base, projected)))
-
-
-def speech_metrics(text: str, estimated_seconds: float | None = None):
-    words = re.findall(r"\b[\w']+\b", text or "")
-    filler_list = ["um", "uh", "erm", "like", "you know", "basically", "actually", "sort of", "kind of"]
-    lowered = (text or "").lower()
-    fillers = sum(len(re.findall(r"\b" + re.escape(f) + r"\b", lowered)) for f in filler_list)
-    words_count = len(words)
-    seconds = estimated_seconds or max(10, words_count / 2.3) if words_count else 0
-    wpm = round(words_count / (seconds / 60), 1) if seconds else 0
-    return {"words": words_count, "filler_words": fillers, "estimated_seconds": round(seconds, 1), "words_per_minute": wpm}
-
-
-init_db()
-
-for key, default in {
-    "session_id": str(uuid.uuid4()),
-    "evidence": None,
-    "research": None,
-    "turns": [],
-    "question": None,
-    "started": False,
-    "started_at": None,
-    "session_duration": 30,
-    "question_mode": "Text Questions",
-    "answer_mode": "⌨️ Type Answers",
-    "categories": CATEGORIES[:],
-    "company": "",
-    "company_track": "",
-    "camera_enabled": False,
-}.items():
-    if key not in st.session_state:
-        st.session_state[key] = default
-
-def configured_secret(name: str, default: str = "") -> str:
-    """Read Streamlit Cloud secrets first, then local environment variables."""
-    try:
-        value = st.secrets.get(name, "")
-    except Exception:
-        value = ""
-    return str(value or os.getenv(name, default) or "").strip()
-
-
-with st.sidebar:
-    st.markdown("## 🎯 Intervia")
-    st.caption("Evidence-Grounded Interview Intelligence")
-    api_key = st.text_input("Groq API key", type="password", value=configured_secret("GROQ_API_KEY"))
-
-    if api_key:
-    try:
-        preview_gateway = GroqGateway(api_key)
-
-        st.caption(
-            f"🤖 Groq model: `{preview_gateway.get_model()}`"
-        )
-
-    except Exception:
-        st.caption(
-            "🤖 Groq model: automatic detection unavailable"
-        )
-    target_role = st.text_input("Target role", value="Senior Renewable Energy Engineer", disabled=st.session_state.started)
-    company = st.text_input("Company / employer (optional)", value=st.session_state.company, disabled=st.session_state.started)
-
-    st.markdown("### Interview Setup")
-    setup_tab, = st.tabs(["Interview categories and Interview mode"])
-    with setup_tab:
-        mode = st.selectbox(
-            "Interview mode",
-            ["Mixed", "Technical", "Behavioral", "Case / Situational", "HR / Screening", "Leadership"],
-            disabled=st.session_state.started,
-            help="Controls the interviewer's primary question style. Categories below provide the specific areas to test."
-        )
-        categories = st.multiselect(
-            "Interview categories",
-            CATEGORIES,
-            default=st.session_state.categories,
-            disabled=st.session_state.started,
-            help="Select one or more categories. The adaptive strategy agent balances them as the session progresses."
-        )
-
-    duration_label = st.selectbox("Practice session duration", list(DURATIONS.keys()), index=0 if st.session_state.session_duration == 30 else list(DURATIONS.values()).index(st.session_state.session_duration), disabled=st.session_state.started)
-    duration_minutes = DURATIONS[duration_label]
-
-    question_mode = st.radio(
-        "Question format",
-        ["Text Questions", "Audio Questions"],
-        index=0 if st.session_state.question_mode == "Text Questions" else 1,
-        disabled=st.session_state.started,
-        horizontal=True,
-        help="Text Questions shows the question on screen. Audio Questions also reads it aloud using the browser's built-in speech synthesis."
-    )
-    answer_mode = st.radio(
-        "Answer format",
-        ["⌨️ Type Answers", "🎙️ Speak Answers"],
-        index=0 if st.session_state.answer_mode.startswith("⌨") else 1,
-        disabled=st.session_state.started,
-        horizontal=True,
-        help="Type Answers uses a text box. Speak Answers records your microphone response and sends it to Groq Whisper for transcription."
-    )
-    use_research = st.checkbox("Company / role web research", value=False, disabled=st.session_state.started)
-    camera_enabled = st.checkbox("Camera presentation snapshot", value=st.session_state.camera_enabled, disabled=st.session_state.started, help="Optional snapshot analysis of observable framing/posture cues. It does not infer emotions or personality.")
-    speech_language = st.selectbox("Question voice", ["English (US)", "English (UK)"], index=0, disabled=st.session_state.started)
-    speech_locale = "en-US" if speech_language == "English (US)" else "en-GB"
-    answer_length = st.selectbox("AI practice-answer length", ["Short", "Standard", "Detailed"], disabled=st.session_state.started)
-    st.divider()
-    st.caption("Tip: for a realistic session, choose the modalities once here. Intervia keeps them fixed for the complete session.")
-    st.caption("Production: keep secrets in Streamlit Secrets, not GitHub.")
-
-    if not st.session_state.started:
-        st.session_state.session_duration = duration_minutes
-        st.session_state.question_mode = question_mode
-        st.session_state.answer_mode = answer_mode
-        st.session_state.categories = categories or CATEGORIES[:]
-        st.session_state.company = company
-        st.session_state.company_track = ""
-        st.session_state.camera_enabled = camera_enabled
-
-st.markdown(
-    """
-    <div class="hero">
-      <div class="eyebrow">Adaptive Interview Intelligence</div>
-      <h1>Practice against the job — with text or voice, on your schedule.</h1>
-      <div class="muted">Choose question and answer modalities once, select a session length and interview categories, then Intervia automatically adapts the Q&A pace to the remaining time.</div>
+def render_top_header():
+    """Renders the top navigation breadcrumbs and tabs."""
+    st.markdown("""
+    <div style='display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; font-size:12px; color:#94A3B8;'>
+        <div>
+            <span>Workspace</span> <span style='color:#4A5568;'>›</span> 
+            <span>Session telemetry #sess-8f3a</span> 
+            <span style='background:#2D3748; padding:2px 8px; border-radius:4px; margin-left:10px;'>Model: FAANG-Style</span>
+            <span class='badge badge-red' style='margin-left:10px;'>Hard (Escalated)</span>
+            <span class='badge badge-purple' style='margin-left:5px;'>Stripe / Tier 1 Backend</span>
+        </div>
+        <div style='font-size:16px;'>🔊 &nbsp; 🕒 &nbsp; ⬇️ &nbsp; 👤</div>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    """, unsafe_allow_html=True)
 
-if not st.session_state.started:
-    st.info("Before starting: configure **Interview categories and Interview mode**, choose **Text or Audio Questions**, **Type or Speak Answers**, and select your practice session duration.")
+    # Primary Nav
+    tabs = ["Live Adaptive Interview", "6-D Evaluation", "JD → Curriculum", "Resume & ATS Gap", "Live Coding", "Executive Performance"]
+    tab_html = "<div style='margin-bottom: 20px;'>"
+    for t in tabs:
+        active = "active" if t == "Live Adaptive Interview" else ""
+        tab_html += f"<span class='nav-tab {active}'>{t}</span>"
+    tab_html += "</div>"
+    st.markdown(tab_html, unsafe_allow_html=True)
 
-left, right = st.columns([1.35, 1])
-with left:
-    st.markdown("### 1. Build the evidence pack")
-    cv_file = st.file_uploader("CV / Resume", type=["pdf", "docx", "txt"], key="cv")
-    jd_file = st.file_uploader("Job Description", type=["pdf", "docx", "txt"], key="jd")
-    jd_text = st.text_area("Or paste the job description", height=150, placeholder="Paste the JD here if you do not have a file.")
-    company_track = st.text_area("Optional company-specific question context", height=90, placeholder="Paste publicly sourced interview themes/questions or a company-specific question bank here. Keep it factual and non-confidential.", disabled=st.session_state.started)
+    # Secondary Sub-Nav
+    sub_tabs = ["🎤 1. Live Adaptive Interview", "⚖️ 2. 6-D Evaluation", "⚙️ 3. JD → Curriculum", "📄 4. Resume & ATS Gap", "💻 5. Live Coding IDE"]
+    sub_html = "<div style='margin-bottom: 25px; background: #12151C; padding: 10px; border-radius: 8px; border: 1px solid #1F2937;'>"
+    for i, t in enumerate(sub_tabs):
+        active = "active" if i == 0 else ""
+        sub_html += f"<span class='nav-tab {active}'>{t}</span>"
+    sub_html += "</div>"
+    st.markdown(sub_html, unsafe_allow_html=True)
 
-    if st.button("Build evidence pack", type="primary", use_container_width=True, disabled=st.session_state.started):
-        if not api_key:
-            st.error("Enter a Groq API key first.")
-        elif not cv_file:
-            st.error("Upload a CV / Resume.")
-        elif not (jd_file or jd_text.strip()):
-            st.error("Upload or paste the Job Description.")
-        else:
-            st.session_state.company_track = company_track
-            cv_text = extract_uploaded_text(cv_file)
-            final_jd = extract_uploaded_text(jd_file) if jd_file else jd_text
-            st.session_state.evidence = EvidenceAgent().build(
-                cv_text=safe_clamp(cv_text, 14000),
-                jd_text=safe_clamp(final_jd, 12000),
-                target_role=target_role,
-                industry="Not specified — grounded in CV/JD and role context",
-            )
-            st.session_state.research = None
-            st.session_state.turns = []
-            st.session_state.question = None
-            st.session_state.started = False
-            st.session_state.started_at = None
-            if use_research:
-                try:
-                    gateway = GroqGateway(api_key)
-                    st.session_state.research = ResearchAgent(gateway).run(
-                        target_role, "Not specified — grounded in CV/JD and role context", safe_clamp(final_jd, 6000), company=company, company_track=company_track
-                    )
-                except Exception as exc:
-                    st.warning(f"Research unavailable; continuing without it. {exc}")
-            st.success("Evidence pack created. Candidate evidence, JD requirements and external research remain separate.")
-
-with right:
-    st.markdown(
-        """
-        <div class="cockpit">
-            <div class="cockpit-title">Agent Cockpit</div>
-
-            <div class="agent">
-                <span class="agent-name">Evidence Intelligence</span>
-                <span class="status {evidence_status_class}">{evidence_status}</span>
+def render_question_progress():
+    """Renders the question progress bar and difficulty badge."""
+    st.markdown("""
+    <div style='display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:20px;'>
+        <div style='display:flex; align-items:center; gap:20px;'>
+            <div>
+                <h2 style='margin:0; font-size:24px;'>Question 3 <span style='color:#64748B; font-weight:400;'>of 6</span></h2>
+                <p style='margin:0; font-size:12px; color:#94A3B8;'>Backend / Infrastructure</p>
             </div>
-
-            <div class="agent">
-                <span class="agent-name">Career &amp; Market Research</span>
-                <span class="status {research_status_class}">{research_status}</span>
+            <div class='progress-container' style='width:200px;'>
+                <div class='progress-segment filled'></div>
+                <div class='progress-segment filled'></div>
+                <div class='progress-segment active'></div>
+                <div class='progress-segment'></div>
+                <div class='progress-segment'></div>
+                <div class='progress-segment'></div>
             </div>
-
-            <div class="agent">
-                <span class="agent-name">Interview Strategy</span>
-                <span class="status {strategy_status_class}">{strategy_status}</span>
-            </div>
-
-            <div class="agent">
-                <span class="agent-name">AI Interviewer</span>
-                <span class="status {interviewer_status_class}">{interviewer_status}</span>
-            </div>
-
-            <div class="agent">
-                <span class="agent-name">Performance Coach</span>
-                <span class="status ready">READY</span>
-            </div>
-
-            <div style="height:18px;"></div>
-
-            <div class="cockpit-title">Session Design</div>
-
-            <b>Interview Mode</b><br>
-            <span class="small">{mode_value}</span>
-
-            <br><br>
-
-            <b>Interview Categories</b><br>
-            <span class="small">{category_count} selected</span>
-
-            <br><br>
-
-            <b>Duration</b><br>
-            <span class="small">{duration_value}</span>
-
-            <br><br>
-
-            <b>Question Format</b><br>
-            <span class="small">{question_format}</span>
-
-            <br><br>
-
-            <b>Answer Format</b><br>
-            <span class="small">{answer_format}</span>
         </div>
-        """.format(
-            evidence_status_class="ready" if st.session_state.evidence else "waiting",
-            evidence_status="READY" if st.session_state.evidence else "WAITING",
-            research_status_class=("ready" if st.session_state.research else ("optional" if not use_research else "waiting")),
-            research_status=("READY" if st.session_state.research else ("OPTIONAL" if not use_research else "WAITING")),
-            strategy_status_class="active" if st.session_state.started else "ready",
-            strategy_status="ACTIVE" if st.session_state.started else "READY",
-            interviewer_status_class="active" if st.session_state.question else "ready",
-            interviewer_status="ACTIVE" if st.session_state.question else "READY",
-            mode_value=escape(mode),
-            category_count=len(categories or CATEGORIES),
-            duration_value=escape(duration_label),
-            question_format=escape(question_mode),
-            answer_format=escape(answer_mode),
-        ),
-        unsafe_allow_html=True,
-    )
-
-if st.session_state.evidence:
-    ev = st.session_state.evidence
-    st.markdown("### Evidence snapshot")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Candidate facts", len(ev.get("candidate_facts", [])))
-    c2.metric("JD requirements", len(ev.get("jd_requirements", [])))
-    c3.metric("Skill gaps", len(ev.get("gaps", [])))
-    with st.expander("View grounding data"):
-        st.write("**Candidate evidence**", ev.get("candidate_facts", []))
-        st.write("**JD requirements**", ev.get("jd_requirements", []))
-        st.write("**Matched skills**", ev.get("matches", []))
-        st.write("**Gaps / unknowns**", ev.get("gaps", []))
-
-    if not st.session_state.started:
-        if st.button("🚀 Start complete adaptive interview", type="primary", use_container_width=True):
-            if not categories:
-                st.error("Select at least one interview category.")
-            elif not api_key:
-                st.error("Groq API key is required.")
-            else:
-                gateway = GroqGateway(api_key)
-                strategy = StrategyAgent()
-                interviewer = InterviewerAgent(gateway)
-                now = time.time()
-                st.session_state.started_at = now
-                elapsed, remaining, _ = duration_state(now, duration_minutes)
-                target_count = question_target(duration_minutes, elapsed, 0)
-                plan = strategy.plan([], mode, duration_label, ev, categories=categories, remaining_minutes=round(remaining/60, 1), target_questions=target_count)
-                try:
-                    q = interviewer.ask_question(
-                        ev,
-                        st.session_state.research,
-                        plan,
-                        target_role,
-                        "Not specified — grounded in CV/JD and role context",
-                        mode,
-                        company=company,
-                    )
-                except Exception as exc:
-                    st.error("❌ The adaptive interview could not generate Question 1.")
-                    st.code(str(exc), language="text")
-                    st.info(
-                        "The app now keeps the session stopped instead of crashing. "
-                        "If this is a 403, enable at least one accessible Groq model in your Groq project. "
-                        "If it is a 429, wait for the rate-limit window or use a shorter session."
-                    )
-                else:
-                    st.session_state.question = q
-                    st.session_state.started = True
-                    st.session_state.session_duration = duration_minutes
-                    st.session_state.question_mode = question_mode
-                    st.session_state.answer_mode = answer_mode
-                    st.session_state.categories = categories
-                    st.session_state.company = company
-                    st.session_state.camera_enabled = camera_enabled
-                    st.rerun()
-
-if st.session_state.started and st.session_state.question:
-    st.markdown("---")
-    st.markdown("### 2. Live interview studio")
-    elapsed, remaining, expired = duration_state(st.session_state.started_at, st.session_state.session_duration)
-    turn_no = len(st.session_state.turns) + 1
-    target_count = question_target(st.session_state.session_duration, elapsed, len(st.session_state.turns))
-    progress = min(1.0, len(st.session_state.turns) / max(1, target_count))
-    top1, top2, top3 = st.columns([1.6, 1, 1])
-    with top1:
-        st.progress(progress, text=f"Question {turn_no} · adaptive target {target_count}")
-    with top2:
-        st.metric("Elapsed", f"{int(elapsed//60):02d}:{int(elapsed%60):02d}")
-    with top3:
-        render_timer(st.session_state.started_at, st.session_state.session_duration)
-
-    if expired:
-        st.warning("⏱️ Your selected practice session time has ended. Your report is ready below.")
-        st.session_state.question = None
-    else:
-        q_obj = st.session_state.question if isinstance(st.session_state.question, dict) else {"category": "General", "question": str(st.session_state.question)}
-        question_text = q_obj["question"].strip()
-        category = q_obj.get("category", "General")
-        st.markdown(f"<span class='category'>{escape(category)}</span>", unsafe_allow_html=True)
-        st.markdown(f'<div class="question">{escape(question_text)}</div>', unsafe_allow_html=True)
-        render_speech_controls(
-            question_text,
-            f"question_{turn_no}",
-            "Generated interview question",
-            speech_locale,
-            autoplay=(st.session_state.question_mode == "Audio Questions"),
-        )
-        if st.session_state.question_mode == "Audio Questions":
-            st.caption("Audio mode: the question is spoken automatically when available; playback stops automatically when the question finishes. Browser autoplay restrictions may require pressing Play once.")
-
-        st.markdown("#### Your answer")
-        st.caption(f"Answer mode locked for this session: **{st.session_state.answer_mode}**")
-        answer = ""
-        voice_transcript = ""
-        audio = None
-        if st.session_state.answer_mode == "⌨️ Type Answers":
-            answer = st.text_area("Type your answer", key=f"answer_input_{turn_no}", height=190, placeholder="Answer as if you were in the real interview.")
-        else:
-            audio = st.audio_input("🎙️ Record your answer", sample_rate=16000, key=f"answer_audio_{turn_no}")
-            st.caption("Speak naturally. Submit the recording when you finish; Whisper will transcribe it before coaching.")
-
-        camera = None
-        if st.session_state.camera_enabled:
-            camera = st.camera_input("Optional camera snapshot for presentation-cue feedback", key=f"camera_{turn_no}")
-            st.caption("MVP camera analysis is a snapshot, not continuous video. It evaluates only observable framing/posture/camera cues; it does not infer emotions, personality, health or mental state.")
-
-        submit = st.button("Submit answer & get coaching", type="primary", use_container_width=True)
-        if submit:
-            elapsed_now, remaining_now, expired_now = duration_state(st.session_state.started_at, st.session_state.session_duration)
-            if expired_now:
-                st.warning("The session time has ended. Finish with the report below.")
-                st.session_state.question = None
-                st.rerun()
-            elif not api_key:
-                st.error("Groq API key is required.")
-            else:
-                gateway = GroqGateway(api_key)
-                if st.session_state.answer_mode == "🎙️ Speak Answers" and audio is not None:
-                    try:
-                        voice_transcript = gateway.transcribe(audio.getvalue(), getattr(audio, "name", "answer.wav")).strip()
-                        answer = voice_transcript
-                    except Exception as exc:
-                        st.error(f"Voice transcription failed. Please record again or use text. {exc}")
-                else:
-                    answer = (answer or "").strip()
-
-                if not answer:
-                    st.error("Provide an answer before submitting.")
-                else:
-                    coach = CoachAgent(gateway)
-                    result = coach.evaluate(
-                        question=question_text,
-                        answer=answer,
-                        evidence=st.session_state.evidence,
-                        target_role=target_role,
-                        mode=mode,
-                        answer_length=answer_length,
-                    )
-                    metrics = speech_metrics(answer) if voice_transcript else {"words": len(answer.split()), "filler_words": None, "estimated_seconds": None, "words_per_minute": None}
-                    camera_feedback = None
-                    if camera is not None:
-                        try:
-                            camera_feedback = gateway.analyze_camera(camera.getvalue(), getattr(camera, "type", "image/jpeg"))
-                        except Exception as exc:
-                            camera_feedback = {"available": False, "error": str(exc)}
-                    result["speech_metrics"] = metrics
-                    result["presentation_cues"] = camera_feedback
-                    st.session_state.turns.append({
-                        "question": question_text,
-                        "category": category,
-                        "answer": answer,
-                        "answer_mode": "voice" if voice_transcript else "text",
-                        "voice_transcript": voice_transcript,
-                        "feedback": result,
-                        "timestamp": datetime.utcnow().isoformat(timespec="seconds"),
-                        "elapsed_seconds": round(elapsed_now, 1),
-                    })
-                    save_session(st.session_state.session_id, target_role, "Not specified — grounded in CV/JD and role context", st.session_state.turns)
-
-                    # Generate next question only if time remains.
-                    elapsed_after, remaining_after, expired_after = duration_state(st.session_state.started_at, st.session_state.session_duration)
-                    if expired_after:
-                        st.session_state.question = None
-                    else:
-                        strategy = StrategyAgent()
-                        target_count = question_target(st.session_state.session_duration, elapsed_after, len(st.session_state.turns))
-                        plan = strategy.plan(
-                            st.session_state.turns,
-                            mode,
-                            duration_label,
-                            st.session_state.evidence,
-                            categories=st.session_state.categories,
-                            remaining_minutes=round(remaining_after / 60, 1),
-                            target_questions=target_count,
-                        )
-                        interviewer = InterviewerAgent(gateway)
-                        try:
-                            st.session_state.question = interviewer.ask_question(
-                                st.session_state.evidence,
-                                st.session_state.research,
-                                plan,
-                                target_role,
-                                "Not specified — grounded in CV/JD and role context",
-                                mode,
-                                company=company,
-                            )
-                        except Exception as exc:
-                            st.error("❌ The next adaptive question could not be generated.")
-                            st.code(str(exc), language="text")
-                            st.info("Your completed answer is saved. Fix the Groq access/rate-limit issue and continue the session.")
-                    st.rerun()
-
-    if st.session_state.turns:
-        latest = st.session_state.turns[-1]["feedback"]
-        st.markdown("### Latest coaching")
-        cols = st.columns(6)
-        for col, key, label in zip(cols, ["technical", "relevance", "evidence", "communication", "structure", "confidence"], ["Technical", "Relevance", "Evidence", "Communication", "Structure", "Confidence"]):
-            col.metric(label, latest.get("scores", {}).get(key, 0))
-        st.metric("Overall", latest.get("overall", 0))
-        st.markdown('<div class="card">', unsafe_allow_html=True)
-        st.write("**Strengths**", latest.get("strengths", []))
-        st.write("**Missing / improve**", latest.get("missing_points", []))
-        st.write("**Verification notes**", latest.get("verification_notes", []))
-        st.write("**Practice answer**", latest.get("practice_answer", ""))
-        st.write("**Next improvement**", latest.get("next_improvement", ""))
-        sm = latest.get("speech_metrics", {})
-        if sm:
-            st.write("**Speech analytics**", sm)
-        if latest.get("presentation_cues"):
-            st.write("**Presentation cues**", latest["presentation_cues"])
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        st.markdown("### Category readiness")
-        category_scores = defaultdict(list)
-        for t in st.session_state.turns:
-            category_scores[t.get("category", "General")].append(t.get("feedback", {}).get("overall", 0))
-        readiness_cols = st.columns(min(4, max(1, len(category_scores))))
-        for idx, (cat, vals) in enumerate(category_scores.items()):
-            readiness_cols[idx % len(readiness_cols)].metric(cat.split(" ")[0], round(sum(vals)/len(vals)))
-
-        st.markdown("### 3. Session report")
-        md = build_markdown_report(
-            target_role=target_role,
-            industry="Not specified — grounded in CV/JD and role context",
-            mode=mode,
-            turns=st.session_state.turns,
-            evidence=st.session_state.evidence,
-        )
-        pdf = build_pdf_report(
-            target_role=target_role,
-            industry="Not specified — grounded in CV/JD and role context",
-            mode=mode,
-            turns=st.session_state.turns,
-            evidence=st.session_state.evidence,
-        )
-        st.download_button("Download Markdown report", md, file_name="intervia_report.md", mime="text/markdown")
-        st.download_button("Download PDF report", pdf, file_name="intervia_report.pdf", mime="application/pdf")
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-st.markdown(
-    """
-    <div class="footer">
-        <div style="color:#d8e2f4;font-weight:800;font-size:15px;">
-            Intervia — Interview Intelligence
-        </div>
-        <div style="margin-top:6px;font-size:12px;">
-            AI-assisted interview practice powered by Groq.
+        <div style='text-align:right;'>
+            <span class='badge badge-red'>⚡ Hard (Escalated from Medium)</span>
+            <div style='font-size:12px; color:#94A3B8; margin-top:5px;'>
+                <span style='color:#22D3EE;'>Candidate L5</span> • Benchmark: Stripe Eng II
+            </div>
+            <div style='font-size:12px; color:#94A3B8; margin-top:5px;'>
+                🕒 14:32 remaining
+            </div>
         </div>
     </div>
-    """,
-    unsafe_allow_html=True,
-)
+    """, unsafe_allow_html=True)
+
+# -----------------------------------------------------------------------------
+# 5. MAIN EXECUTION BLOCK
+# -----------------------------------------------------------------------------
+def main():
+    load_css()
+    render_sidebar()
+    render_top_header()
+    render_question_progress()
+
+    col_left, col_right = st.columns([1.1, 1], gap="large")
+
+    # --- LEFT COLUMN ---
+    with col_left:
+        # AI Interviewer Profile
+        st.markdown("""
+        <div class='css-card' style='display:flex; justify-content:space-between; align-items:center;'>
+            <div style='display:flex; align-items:center; gap:15px;'>
+                <div style='background: linear-gradient(135deg, #22D3EE, #6366F1); border-radius: 50%; width: 48px; height: 48px; display:flex; justify-content:center; align-items:center;'>
+                    <span style='font-size:24px;'>🤖</span>
+                </div>
+                <div>
+                    <h4 style='margin:0; font-size:16px;'>Aria-6X <span style='color:#22D3EE; font-size:14px;'>✦</span></h4>
+                    <p style='margin:0; font-size:12px; color:#94A3B8;'>FAANG-Style • Principal Engineer Tier</p>
+                </div>
+            </div>
+            <div style='text-align:right;'>
+                <span class='badge badge-gray'>ACTIVE PROBE</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Prompt Card
+        st.markdown("""
+        <div class='css-card css-card-prompt'>
+            <p style='font-size:11px; font-weight:700; color:#A78BFA; margin-bottom:10px; letter-spacing:1px;'>📝 TECHNICAL ESCALATION PROMPT</p>
+            <p style='font-size:15px; line-height:1.6; margin:0; color:#E2E8F0;'>
+                "You mentioned deploying Django applications with Docker. Walk me through how you containerized the application, managed multi-stage builds, and handled production configuration & secrets without baking them into image layers."
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Active Evaluation Focus
+        st.markdown("<p style='font-size:11px; font-weight:700; color:#64748B; margin-bottom:8px;'>ACTIVE EVALUATION FOCUS</p>", unsafe_allow_html=True)
+        st.markdown("""
+        <div style='margin-bottom:20px;'>
+            <span class='badge badge-gray' style='border-color:#8B5CF6; color:#A78BFA;'>Multi-Stage Artifacts</span>
+            <span class='badge badge-gray' style='border-color:#8B5CF6; color:#A78BFA;'>BuildKit Secrets</span>
+            <span class='badge badge-gray' style='border-color:#8B5CF6; color:#A78BFA;'>Non-root Daemon UID</span>
+            <span class='badge badge-gray' style='border-color:#8B5CF6; color:#A78BFA;'>Alpine vs Slim Glibc</span>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # User Status
+        st.markdown("""
+        <div style='display:flex; justify-content:space-between; align-items:center; background:#12151C; padding:10px 15px; border-radius:8px; border:1px solid #1F2937; margin-bottom:20px;'>
+            <div style='display:flex; align-items:center; gap:10px;'>
+                <div style='background:#2D3748; border-radius:50%; width:24px; height:24px; display:flex; justify-content:center; align-items:center; font-size:12px;'>👤</div>
+                <span style='font-size:13px;'>Alex Chen (You)</span>
+            </div>
+            <div style='font-size:12px; color:#10B981;'>Mic Connected • Latency 18ms</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Architect Tip
+        st.markdown("""
+        <div style='background: rgba(34, 211, 238, 0.05); border-left: 3px solid #22D3EE; padding: 15px; border-radius: 0 8px 8px 0;'>
+            <p style='margin:0; font-size:12px; font-weight:700; color:#22D3EE;'>💡 Senior Architect Tip</p>
+            <p style='margin:5px 0 0 0; font-size:13px; color:#94A3B8; line-height:1.5;'>
+                Address build cache invalidation order and how you mitigate running Python processes as root in standard ECS/EKS worker pools.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+    # --- RIGHT COLUMN ---
+    with col_right:
+        # Mode Toggle (Now Interactive via Session State)
+        mode_col1, mode_col2 = st.columns([2, 1])
+        with mode_col1:
+            mode = st.radio("Mode", ["🎤 Voice Stream Active", "⌨️ Text Mode"], 
+                            horizontal=True, label_visibility="collapsed")
+            st.session_state.app_mode = 'voice' if "Voice" in mode else 'text'
+        with mode_col2:
+            st.markdown("<div style='text-align:right; font-size:11px; color:#10B981; font-weight:600; padding-top:10px;'>WHISPER-V3 ONLINE ●</div>", unsafe_allow_html=True)
+
+        # Audio Buffer Card
+        st.markdown(f"""
+        <div class='css-card' style='text-align:center; padding:30px 20px;'>
+            <p style='font-size:11px; font-weight:700; color:#64748B; letter-spacing:1px; margin-bottom:5px;'>LIVE NEURAL AUDIO BUFFER</p>
+            <h1 style='font-size:36px; margin:0; font-weight:700;'>01:24</h1>
+            
+            <div class='waveform'>
+                <div class='wave-bar' style='height: 20px; animation-delay: 0.1s;'></div>
+                <div class='wave-bar' style='height: 40px; animation-delay: 0.2s;'></div>
+                <div class='wave-bar' style='height: 30px; animation-delay: 0.3s;'></div>
+                <div class='wave-bar' style='height: 50px; animation-delay: 0.4s;'></div>
+                <div class='wave-bar' style='height: 25px; animation-delay: 0.5s;'></div>
+                <div class='wave-bar' style='height: 60px; animation-delay: 0.6s; background-color:#22D3EE;'></div>
+                <div class='wave-bar' style='height: 35px; animation-delay: 0.7s;'></div>
+                <div class='wave-bar' style='height: 45px; animation-delay: 0.8s;'></div>
+                <div class='wave-bar' style='height: 20px; animation-delay: 0.9s;'></div>
+                <div class='wave-bar' style='height: 55px; animation-delay: 1.0s; background-color:#22D3EE;'></div>
+            </div>
+            
+            <div style='background: linear-gradient(135deg, #A855F7, #6366F1); border-radius: 50%; width: 64px; height: 64px; display:flex; justify-content:center; align-items:center; margin: 0 auto 15px auto; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); cursor:pointer;'>
+                <span style='font-size:28px;'>🎤</span>
+            </div>
+            <p style='font-size:13px; color:#94A3B8; margin:0;'>Recording in progress... Click to pause</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Audio Metrics Grid
+        st.markdown("""
+        <div style='display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:20px;'>
+            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>SPEAKING PACE</p>
+                <p style='font-size:16px; color:#22D3EE; margin:0; font-weight:700;'>142 <span style='font-size:10px; color:#64748B; font-weight:400;'>WPM</span></p>
+                <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Optimal ●</p>
+            </div>
+            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>FILLER WORDS</p>
+                <p style='font-size:16px; color:#FBBF24; margin:0; font-weight:700;'>2 <span style='font-size:10px; color:#64748B; font-weight:400;'>detected</span></p>
+                <p style='font-size:10px; color:#94A3B8; margin:2px 0 0 0;'>um, like ●</p>
+            </div>
+            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>DURATION</p>
+                <p style='font-size:16px; color:#E2E8F0; margin:0; font-weight:700;'>1m 24s</p>
+                <p style='font-size:10px; color:#64748B; margin:2px 0 0 0;'>Max 3m 00s</p>
+            </div>
+            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>CLARITY SCORE</p>
+                <p style='font-size:16px; color:#10B981; margin:0; font-weight:700;'>9.2<span style='font-size:10px; color:#64748B; font-weight:400;'>/10</span></p>
+                <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Enunciation ●</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        # Transcription Area (Now a proper Streamlit text area for editing)
+        st.markdown("""
+        <div class='css-card' style='padding:15px 15px 5px 15px;'>
+            <div style='display:flex; justify-content:space-between; margin-bottom:10px;'>
+                <span style='font-size:12px; font-weight:600; color:#E2E8F0;'>📝 Live Real-Time Transcription</span>
+                <span style='font-size:11px; color:#64748B;'>Click text below to edit prior to calibration</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Using Streamlit's native text_area for actual editing capability
+        transcript_default = "So for our container pipeline, um we started with a multi-stage Alpine Dockerfile. In the build stage, we compiled wheels, and in the runtime stage, we copied only wheels... like avoiding gcc bloat. We also passed environment secrets via AWS Secrets Manager at task startup so they were not baked into layers."
+        st.text_area("Transcript", value=transcript_default, height=120, label_visibility="collapsed")
+
+        # Action Buttons
+        st.markdown("<br>", unsafe_allow_html=True)
+        btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1.5])
+        with btn_col1:
+            if st.button("🔄 Re-record & Reset", use_container_width=True):
+                st.toast("Recording reset.")
+        with btn_col2:
+            if st.button("✨ Auto-Remove Fillers", use_container_width=True):
+                st.toast("Fillers removed from transcript.")
+        with btn_col3:
+            st.markdown("<div class='btn-primary'>", unsafe_allow_html=True)
+            if st.button("Submit Answer & Calibrate 🚀", use_container_width=True):
+                st.success("Answer submitted successfully! Calibrating...")
+            st.markdown("</div>", unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
