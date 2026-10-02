@@ -1,5 +1,4 @@
 import streamlit as st
-import time
 
 # -----------------------------------------------------------------------------
 # 1. PAGE CONFIGURATION (Must be the first Streamlit command)
@@ -14,11 +13,14 @@ st.set_page_config(
 # -----------------------------------------------------------------------------
 # 2. STATE MANAGEMENT
 # -----------------------------------------------------------------------------
-# Initialize session state variables to make the dashboard interactive
-if 'app_mode' not in st.session_state:
-    st.session_state.app_mode = 'voice'
-if 'is_recording' not in st.session_state:
-    st.session_state.is_recording = True
+def init_session_state():
+    """Initializes session state variables for the interview flow."""
+    if 'interview_started' not in st.session_state:
+        st.session_state.interview_started = False
+    if 'answer_submitted' not in st.session_state:
+        st.session_state.answer_submitted = False
+    if 'app_mode' not in st.session_state:
+        st.session_state.app_mode = 'voice'
 
 # -----------------------------------------------------------------------------
 # 3. CUSTOM CSS (ULTRA PREMIUM THEME)
@@ -144,7 +146,7 @@ def load_css():
             50% { transform: scaleY(1); opacity: 1; }
         }
         
-        /* Buttons */
+        /* Native Streamlit Button Overrides */
         .stButton > button {
             width: 100%;
             border-radius: 8px;
@@ -160,13 +162,26 @@ def load_css():
             box-shadow: 0 0 10px rgba(139, 92, 246, 0.3);
         }
         
-        .btn-primary > button {
+        /* Target Streamlit's Primary Button */
+        .stButton > button[kind="primary"] {
             background: linear-gradient(90deg, #6366F1, #A855F7) !important;
             border: none !important;
             color: white !important;
         }
-        .btn-primary > button:hover {
+        .stButton > button[kind="primary"]:hover {
             box-shadow: 0 0 15px rgba(168, 85, 247, 0.5) !important;
+        }
+        
+        /* Text Area Styling */
+        .stTextArea textarea {
+            background-color: #12151C !important;
+            color: #E2E8F0 !important;
+            border: 1px solid #2D313A !important;
+            border-radius: 8px !important;
+        }
+        .stTextArea textarea:focus {
+            border-color: #8B5CF6 !important;
+            box-shadow: 0 0 0 1px #8B5CF6 !important;
         }
     </style>
     """, unsafe_allow_html=True)
@@ -244,10 +259,11 @@ def render_sidebar():
         """, unsafe_allow_html=True)
         
         st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("<div class='btn-primary'>", unsafe_allow_html=True)
-        if st.button("🚀 Start Interview", use_container_width=True):
-            st.toast("Interview Initialized!")
-        st.markdown("</div>", unsafe_allow_html=True)
+        
+        # Primary Action Button
+        if st.button("🚀 Start Interview", type="primary", use_container_width=True):
+            st.session_state.interview_started = True
+            st.toast("Interview Initialized! Good luck.", icon="🚀")
 
 def render_top_header():
     """Renders the top navigation breadcrumbs and tabs."""
@@ -316,6 +332,7 @@ def render_question_progress():
 # 5. MAIN EXECUTION BLOCK
 # -----------------------------------------------------------------------------
 def main():
+    init_session_state()
     load_css()
     render_sidebar()
     render_top_header()
@@ -387,7 +404,7 @@ def main():
 
     # --- RIGHT COLUMN ---
     with col_right:
-        # Mode Toggle (Now Interactive via Session State)
+        # Mode Toggle
         mode_col1, mode_col2 = st.columns([2, 1])
         with mode_col1:
             mode = st.radio("Mode", ["🎤 Voice Stream Active", "⌨️ Text Mode"], 
@@ -396,69 +413,76 @@ def main():
         with mode_col2:
             st.markdown("<div style='text-align:right; font-size:11px; color:#10B981; font-weight:600; padding-top:10px;'>WHISPER-V3 ONLINE ●</div>", unsafe_allow_html=True)
 
-        # Audio Buffer Card
-        st.markdown(f"""
-        <div class='css-card' style='text-align:center; padding:30px 20px;'>
-            <p style='font-size:11px; font-weight:700; color:#64748B; letter-spacing:1px; margin-bottom:5px;'>LIVE NEURAL AUDIO BUFFER</p>
-            <h1 style='font-size:36px; margin:0; font-weight:700;'>01:24</h1>
-            
-            <div class='waveform'>
-                <div class='wave-bar' style='height: 20px; animation-delay: 0.1s;'></div>
-                <div class='wave-bar' style='height: 40px; animation-delay: 0.2s;'></div>
-                <div class='wave-bar' style='height: 30px; animation-delay: 0.3s;'></div>
-                <div class='wave-bar' style='height: 50px; animation-delay: 0.4s;'></div>
-                <div class='wave-bar' style='height: 25px; animation-delay: 0.5s;'></div>
-                <div class='wave-bar' style='height: 60px; animation-delay: 0.6s; background-color:#22D3EE;'></div>
-                <div class='wave-bar' style='height: 35px; animation-delay: 0.7s;'></div>
-                <div class='wave-bar' style='height: 45px; animation-delay: 0.8s;'></div>
-                <div class='wave-bar' style='height: 20px; animation-delay: 0.9s;'></div>
-                <div class='wave-bar' style='height: 55px; animation-delay: 1.0s; background-color:#22D3EE;'></div>
+        # Conditional Rendering based on Mode
+        if st.session_state.app_mode == 'voice':
+            # Audio Buffer Card
+            st.markdown("""
+            <div class='css-card' style='text-align:center; padding:30px 20px;'>
+                <p style='font-size:11px; font-weight:700; color:#64748B; letter-spacing:1px; margin-bottom:5px;'>LIVE NEURAL AUDIO BUFFER</p>
+                <h1 style='font-size:36px; margin:0; font-weight:700;'>01:24</h1>
+                
+                <div class='waveform'>
+                    <div class='wave-bar' style='height: 20px; animation-delay: 0.1s;'></div>
+                    <div class='wave-bar' style='height: 40px; animation-delay: 0.2s;'></div>
+                    <div class='wave-bar' style='height: 30px; animation-delay: 0.3s;'></div>
+                    <div class='wave-bar' style='height: 50px; animation-delay: 0.4s;'></div>
+                    <div class='wave-bar' style='height: 25px; animation-delay: 0.5s;'></div>
+                    <div class='wave-bar' style='height: 60px; animation-delay: 0.6s; background-color:#22D3EE;'></div>
+                    <div class='wave-bar' style='height: 35px; animation-delay: 0.7s;'></div>
+                    <div class='wave-bar' style='height: 45px; animation-delay: 0.8s;'></div>
+                    <div class='wave-bar' style='height: 20px; animation-delay: 0.9s;'></div>
+                    <div class='wave-bar' style='height: 55px; animation-delay: 1.0s; background-color:#22D3EE;'></div>
+                </div>
+                
+                <div style='background: linear-gradient(135deg, #A855F7, #6366F1); border-radius: 50%; width: 64px; height: 64px; display:flex; justify-content:center; align-items:center; margin: 0 auto 15px auto; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); cursor:pointer;'>
+                    <span style='font-size:28px;'>🎤</span>
+                </div>
+                <p style='font-size:13px; color:#94A3B8; margin:0;'>Recording in progress... Click to pause</p>
             </div>
-            
-            <div style='background: linear-gradient(135deg, #A855F7, #6366F1); border-radius: 50%; width: 64px; height: 64px; display:flex; justify-content:center; align-items:center; margin: 0 auto 15px auto; box-shadow: 0 0 20px rgba(168, 85, 247, 0.4); cursor:pointer;'>
-                <span style='font-size:28px;'>🎤</span>
-            </div>
-            <p style='font-size:13px; color:#94A3B8; margin:0;'>Recording in progress... Click to pause</p>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
 
-        # Audio Metrics Grid
-        st.markdown("""
-        <div style='display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:20px;'>
-            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
-                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>SPEAKING PACE</p>
-                <p style='font-size:16px; color:#22D3EE; margin:0; font-weight:700;'>142 <span style='font-size:10px; color:#64748B; font-weight:400;'>WPM</span></p>
-                <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Optimal ●</p>
+            # Audio Metrics Grid
+            st.markdown("""
+            <div style='display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:20px;'>
+                <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                    <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>SPEAKING PACE</p>
+                    <p style='font-size:16px; color:#22D3EE; margin:0; font-weight:700;'>142 <span style='font-size:10px; color:#64748B; font-weight:400;'>WPM</span></p>
+                    <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Optimal ●</p>
+                </div>
+                <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                    <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>FILLER WORDS</p>
+                    <p style='font-size:16px; color:#FBBF24; margin:0; font-weight:700;'>2 <span style='font-size:10px; color:#64748B; font-weight:400;'>detected</span></p>
+                    <p style='font-size:10px; color:#94A3B8; margin:2px 0 0 0;'>um, like ●</p>
+                </div>
+                <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                    <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>DURATION</p>
+                    <p style='font-size:16px; color:#E2E8F0; margin:0; font-weight:700;'>1m 24s</p>
+                    <p style='font-size:10px; color:#64748B; margin:2px 0 0 0;'>Max 3m 00s</p>
+                </div>
+                <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
+                    <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>CLARITY SCORE</p>
+                    <p style='font-size:16px; color:#10B981; margin:0; font-weight:700;'>9.2<span style='font-size:10px; color:#64748B; font-weight:400;'>/10</span></p>
+                    <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Enunciation ●</p>
+                </div>
             </div>
-            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
-                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>FILLER WORDS</p>
-                <p style='font-size:16px; color:#FBBF24; margin:0; font-weight:700;'>2 <span style='font-size:10px; color:#64748B; font-weight:400;'>detected</span></p>
-                <p style='font-size:10px; color:#94A3B8; margin:2px 0 0 0;'>um, like ●</p>
-            </div>
-            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
-                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>DURATION</p>
-                <p style='font-size:16px; color:#E2E8F0; margin:0; font-weight:700;'>1m 24s</p>
-                <p style='font-size:10px; color:#64748B; margin:2px 0 0 0;'>Max 3m 00s</p>
-            </div>
-            <div style='background:#12151C; border:1px solid #1F2937; border-radius:8px; padding:10px; text-align:center;'>
-                <p style='font-size:10px; color:#64748B; margin:0 0 5px 0; font-weight:600;'>CLARITY SCORE</p>
-                <p style='font-size:16px; color:#10B981; margin:0; font-weight:700;'>9.2<span style='font-size:10px; color:#64748B; font-weight:400;'>/10</span></p>
-                <p style='font-size:10px; color:#10B981; margin:2px 0 0 0;'>Enunciation ●</p>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+            """, unsafe_allow_html=True)
+        else:
+            # Text Mode Input
+            st.markdown("<div class='css-card'>", unsafe_allow_html=True)
+            st.markdown("<p style='font-size:12px; font-weight:600; color:#E2E8F0; margin-bottom:10px;'>⌨️ Type Your Response</p>", unsafe_allow_html=True)
+            st.text_area("Type your answer here...", height=250, label_visibility="collapsed", key="text_mode_input")
+            st.markdown("</div>", unsafe_allow_html=True)
 
-        # Transcription Area (Now a proper Streamlit text area for editing)
+        # Transcription Area (Common to both modes, acts as output buffer)
         st.markdown("""
-        <div class='css-card' style='padding:15px 15px 5px 15px;'>
+        <div class='css-card' style='padding:15px 15px 5px 15px; margin-top:20px;'>
             <div style='display:flex; justify-content:space-between; margin-bottom:10px;'>
-                <span style='font-size:12px; font-weight:600; color:#E2E8F0;'>📝 Live Real-Time Transcription</span>
+                <span style='font-size:12px; font-weight:600; color:#E2E8F0;'>📝 Live Real-Time Transcription / Buffer</span>
                 <span style='font-size:11px; color:#64748B;'>Click text below to edit prior to calibration</span>
             </div>
         </div>
         """, unsafe_allow_html=True)
         
-        # Using Streamlit's native text_area for actual editing capability
         transcript_default = "So for our container pipeline, um we started with a multi-stage Alpine Dockerfile. In the build stage, we compiled wheels, and in the runtime stage, we copied only wheels... like avoiding gcc bloat. We also passed environment secrets via AWS Secrets Manager at task startup so they were not baked into layers."
         st.text_area("Transcript", value=transcript_default, height=120, label_visibility="collapsed")
 
@@ -467,15 +491,18 @@ def main():
         btn_col1, btn_col2, btn_col3 = st.columns([1, 1, 1.5])
         with btn_col1:
             if st.button("🔄 Re-record & Reset", use_container_width=True):
-                st.toast("Recording reset.")
+                st.toast("Recording reset.", icon="🔄")
         with btn_col2:
             if st.button("✨ Auto-Remove Fillers", use_container_width=True):
-                st.toast("Fillers removed from transcript.")
+                st.toast("Fillers removed from transcript.", icon="✨")
         with btn_col3:
-            st.markdown("<div class='btn-primary'>", unsafe_allow_html=True)
-            if st.button("Submit Answer & Calibrate 🚀", use_container_width=True):
+            if st.button("Submit Answer & Calibrate 🚀", type="primary", use_container_width=True):
+                with st.spinner("Calibrating response against FAANG benchmarks..."):
+                    # Simulate processing time
+                    import time
+                    time.sleep(1.5)
                 st.success("Answer submitted successfully! Calibrating...")
-            st.markdown("</div>", unsafe_allow_html=True)
+                st.balloons()
 
 if __name__ == "__main__":
     main()
